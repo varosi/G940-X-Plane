@@ -1,32 +1,69 @@
 # G940-X-Plane
-X-Plane Linux plugins for Logitech Flight System G940
 
-**Linux only**; Windows users could instead look at [XPForce](https://www.fsmissioneditor.com/product/xpforce/)
-(but it's not mine and I haven't tried it).
+Two X-Plane plugins for Logitech Flight System G940:
 
-This repo contains two plugins for X-Plane that work with the Logitech G940:
-* g940FF: force feedback
-  * not specific to G940 but untested with other hardware
-  * very much work in progress
-* g940LEDs: controls the LEDs on the throttle
-  * needs a config UI adding; no other major changes planned
+- **g940FF** adds airspeed-dependent force feedback, with pitch/roll trim and
+  angle of attack influencing the spring center. The force model remains a
+  work in progress.
+- **g940LEDs** maps aircraft state to the eight throttle button LEDs.
 
-See also my [kernel patches](https://github.com/chrisboyle/G940-linux) for the G940, which are **required** for the
-LED plugin and will improve your experience with the force feedback plugin.
+The original implementation supported Linux. Native G940 HID backends now add
+Windows and macOS without replacing Linux's evdev and sysfs backends.
+
+| Platform | Architecture | Force feedback | Throttle LEDs |
+| --- | --- | --- | --- |
+| Linux | x86-64 | Linux evdev; spring or constant-force fallback | G940 sysfs LED driver |
+| Windows | x86-64 | G940 vendor HID output reports | G940 HID feature reports |
+| macOS 11+ | Intel and Apple Silicon, universal binary | G940 vendor HID output reports | G940 HID feature reports |
+
+Both plugins build on all three platforms. macOS has been tested with a connected
+G940, and both plugins loaded and connected in X-Plane 12 on Apple Silicon.
+In-flight testing confirmed that the LEDs respond to flaps and landing lights.
+No force feedback was felt during flight, so physical force output remains an
+unresolved issue despite successful HID report transfers.
+Windows and Linux builds have been cross-compiled, but the new Windows
+backend still needs hardware testing on Windows. macOS/Windows support is
+G940-specific; Linux force feedback may also work with other evdev devices.
+
+Linux LEDs require the original author's
+[G940 kernel patches](https://github.com/chrisboyle/G940-linux) or equivalent
+driver support, plus write permission to the LED brightness files. Force feedback
+requires read/write permission to the joystick's `/dev/input/event*` device.
+
+## Build and install
+
+```sh
+make
+make test
+make install XP_INSTALL_PATH="/path/to/X-Plane 12"
+```
+
+The build downloads the [official X-Plane SDK](https://developer.x-plane.com/sdk/plugin-sdk-downloads/)
+if it is missing. It retains the XPLM 3.0.1 API target for X-Plane 11.20+ and
+X-Plane 12. No locally implemented XPLM stubs are linked into the plugins.
+
+The output is `build/g940FF/64/` and `build/g940LEDs/64/`, with
+`lin.xpl`, `win.xpl`, or `mac.xpl` for the selected platform. Platform objects
+are stored separately, so building another OS does not overwrite an existing
+OS's plugin. Each build creates both plugins.
+
+See [INSTALL.md](INSTALL.md) for prerequisites, Windows setup, SDK overrides,
+installation hints, and hardware testing.
 
 ## LED mapping
-This is not yet configurable, and obviously makes a lot more sense when the button press action and the LED colour
-relate to the same item. For now, either edit the source or remap your buttons P1 to P8 in X-Plane as follows:
 
-<table>
-<tr><td>speedbrakes<br/>retract one</td><td>flaps<br/>retract one</td>
-<td>carb heat<br/>toggle</td><td>autopilot<br/>servos toggle</td></tr>
-<tr><td>speedbrakes<br/>extend one</td><td>flaps<br/>extend one</td>
-<td>landing light<br/>toggle</td><td>landing gear<br/>toggle</td></tr>
-</table>
+Map buttons P1-P8 to these X-Plane actions to match their indicator colours:
 
-## Installation
-`make install`
+| P1 | P2 | P3 | P4 |
+| --- | --- | --- | --- |
+| Speedbrakes: retract one | Flaps: retract one | Carb heat: toggle | Autopilot: servos toggle |
+| **P5** | **P6** | **P7** | **P8** |
+| Speedbrakes: extend one | Flaps: extend one | Landing light: toggle | Landing gear: toggle |
 
-This will download the X-Plane SDK, compile the plugins, try to determine your X-Plane installation location and
-install both plugins into it.
+Red indicates the low/off state, green the high/on state, and amber an
+intermediate position. Indicators for absent aircraft equipment are off.
+The mapping is currently fixed in `g940LEDs.cpp`.
+
+The plugins stop their flight loops and release hardware when disabled. Force
+output also stops when the simulator pauses. Missing/disconnected hardware is
+retried every five seconds and reported in X-Plane's `Log.txt`.
