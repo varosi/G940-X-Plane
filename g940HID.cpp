@@ -1,5 +1,6 @@
 #include "g940HID.h"
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <vector>
 
@@ -29,7 +30,7 @@ std::string deviceError(const char *operation, unsigned code) {
 
 HIDDevice::HIDDevice() : handle_(nullptr)
 #if IBM
-    , featureLength_(0), outputLength_(0)
+    , featureLength_(0), outputLength_(0), inputLength_(0), writeEvent_(nullptr)
 #endif
 {}
 HIDDevice::~HIDDevice() { close(); }
@@ -84,8 +85,7 @@ bool HIDDevice::open() {
         auto detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W *>(storage.data());
         detail->cbSize = sizeof(*detail);
         if (!SetupDiGetDeviceInterfaceDetailW(devices, &info, detail, size, nullptr, nullptr)) continue;
-        // Opening with zero access is enough for HID control transfers and
-        // coexists with the simulator's input reader and the Logitech driver.
+        // Inspect collections without taking input access from X-Plane.
         HANDLE device = CreateFileW(detail->DevicePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
                                     nullptr, OPEN_EXISTING, 0, nullptr);
         if (device == INVALID_HANDLE_VALUE) continue;
@@ -99,10 +99,24 @@ bool HIDDevice::open() {
             HidD_FreePreparsedData(parsed);
             if (result == HIDP_STATUS_SUCCESS && caps.OutputReportByteLength >= 64 &&
                 caps.FeatureReportByteLength >= 3) {
-                handle_ = device;
-                featureLength_ = caps.FeatureReportByteLength;
-                outputLength_ = caps.OutputReportByteLength;
-                break;
+                CloseHandle(device);
+                device = CreateFileW(detail->DevicePath, GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                    FILE_FLAG_OVERLAPPED, nullptr);
+                if (device == INVALID_HANDLE_VALUE) {
+                    error_ = deviceError("Open G940 for output", GetLastError());
+                    continue;
+                }
+                HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+                if (event) {
+                    handle_ = device;
+                    writeEvent_ = event;
+                    featureLength_ = caps.FeatureReportByteLength;
+                    outputLength_ = caps.OutputReportByteLength;
+                    inputLength_ = caps.InputReportByteLength;
+                    break;
+                }
+                error_ = deviceError("Create output event", GetLastError());
             }
         }
         CloseHandle(device);
@@ -123,6 +137,8 @@ void HIDDevice::close() {
     CFRelease(device);
 #elif IBM
     CloseHandle(static_cast<HANDLE>(handle_));
+    CloseHandle(static_cast<HANDLE>(writeEvent_));
+    writeEvent_ = nullptr;
 #endif
     handle_ = nullptr;
 }
@@ -180,11 +196,68 @@ bool HIDDevice::setOutput(const uint8_t *report, size_t length) {
     if (length > outputLength_) { error_ = "Output report is too large"; return false; }
     std::vector<uint8_t> padded(outputLength_, 0);
     std::copy(report, report + length, padded.begin());
-    if (HidD_SetOutputReport(static_cast<HANDLE>(handle_), padded.data(), padded.size())) return true;
-    error_ = deviceError("Set output report", GetLastError());
+    // Firmware 1.42 rejects SET_REPORT(Output, 2) on the control endpoint.
+    // WriteFile delivers the report through the USB interrupt OUT endpoint.
+    HANDLE device = static_cast<HANDLE>(handle_);
+    OVERLAPPED write = {};
+    write.hEvent = static_cast<HANDLE>(writeEvent_);
+    ResetEvent(write.hEvent);
+    DWORD written = 0;
+    BOOL result = WriteFile(device, padded.data(), static_cast<DWORD>(padded.size()),
+                            &written, &write);
+    if (!result && GetLastError() == ERROR_IO_PENDING) {
+        const DWORD wait = WaitForSingleObject(write.hEvent, 100);
+        if (wait != WAIT_OBJECT_0) {
+            const DWORD code = wait == WAIT_TIMEOUT ? ERROR_TIMEOUT : GetLastError();
+            CancelIoEx(device, &write);
+            // Keep the buffer and OVERLAPPED alive until cancellation completes.
+            GetOverlappedResult(device, &write, &written, TRUE);
+            error_ = deviceError("Wait for output report", code);
+            return false;
+        }
+        result = GetOverlappedResult(device, &write, &written, FALSE);
+    }
+    if (result && written == padded.size()) return true;
+    error_ = result ? "Incomplete output report" : deviceError("Write output report", GetLastError());
 #else
     (void)report;
 #endif
     return false;
+}
+
+bool HIDDevice::readGrip(bool& covered) {
+    if (!isOpen()) { error_ = "HID device is not open"; return false; }
+#if APL
+    std::array<uint8_t, 21> report = {{1}};
+    CFIndex actual = report.size();
+    const IOReturn result = IOHIDDeviceGetReport(static_cast<IOHIDDeviceRef>(handle_),
+        kIOHIDReportTypeInput, 1, report.data(), &actual);
+    if (result != kIOReturnSuccess) {
+        error_ = deviceError("Read grip sensor", result);
+        return false;
+    }
+    if (actual != static_cast<CFIndex>(report.size()) || report[0] != 1) {
+        error_ = "Incomplete grip sensor report";
+        return false;
+    }
+#elif IBM
+    if (inputLength_ < 21) { error_ = "Grip sensor report unavailable"; return false; }
+    std::vector<uint8_t> report(inputLength_, 0);
+    report[0] = 1;
+    if (!HidD_GetInputReport(static_cast<HANDLE>(handle_), report.data(), report.size())) {
+        error_ = deviceError("Read grip sensor", GetLastError());
+        return false;
+    }
+    if (report[0] != 1) { error_ = "Invalid grip sensor report"; return false; }
+#else
+    (void)covered;
+    error_ = "Grip sensor diagnostics require the native macOS or Windows backend";
+    return false;
+#endif
+#if APL || IBM
+    // Report 1 has 20 payload bytes. Its vendor-defined grip bit is 157.
+    covered = (report[20] & 0x20) != 0;
+    return true;
+#endif
 }
 }

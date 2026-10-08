@@ -16,7 +16,8 @@ The plugins are 64-bit and target X-Plane 11.20+ and X-Plane 12.
   pacman -S --needed make curl unzip mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-python
   ```
 
-Windows force feedback and LEDs use native HID control transfers to the G940.
+Windows force feedback uses HID interrupt output through `WriteFile`; LEDs use
+HID feature control transfers to the G940.
 Avoid running another program that writes G940 force or LED reports at the same
 time. Linux retains the original evdev force-feedback support; throttle LEDs
 require the [G940 kernel patches](https://github.com/chrisboyle/G940-linux) or
@@ -117,18 +118,30 @@ With X-Plane closed, on macOS or Windows:
 make probe
 build/tools/g940_probe --led-test --seconds 10
 build/tools/g940_probe --force-test --seconds 10
+build/tools/g940_probe --pitch-test --seconds 10
+build/tools/g940_probe --pitch-test --reverse --seconds 10
 ```
 
-The first command only reads device information. The LED test displays red,
+The first command only reads device information and the grip sensor. Each test
+prints a preparation warning and waits for Enter. The LED test displays red,
 green, amber, off across P1-P4 and P5-P8, checks the report readback, and restores
-the previous colours. The force test sends a centered spring at 10% saturation,
-then stops it. Hold the stick grip and move it gently to check resistance.
+the previous colours. The force test compares a centered spring at 10% saturation
+with zero force. The pitch test compares a gentle constant force on the
+forward/backward axis with zero force; `--reverse` reverses its direction.
+`--roll-test` does the same on the sideways axis. Each force comparison starts
+after two seconds of continuous grip-sensor coverage and stops if the grip is
+released. Hold the grip throughout both stages and move it gently to check
+resistance. Keep the hand sensor covered: firmware centering with the hand
+removed does not confirm that live force feedback works.
 The G940 needs motor power for force feedback. Successful USB commands alone
 do not establish the force's physical direction or magnitude.
 
 Current macOS flight testing confirms LED changes for flaps and landing lights,
 but no force feedback was felt during flight. The plugin connects and its HID
 commands are accepted; physical force output still requires investigation.
+Bench testing confirmed that feature reports can disable and restore idle
+pitch centering, but live force reports produced no felt force on either axis,
+including a direct USB interrupt transfer. This remains unresolved.
 
 In a loaded flight, test flap and landing-light changes, then compare stick
 resistance at low and higher airspeed. Pause the simulator and disable/re-enable

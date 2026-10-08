@@ -1,8 +1,13 @@
 # G940 HID reports
 
 The native macOS and Windows backends address Logitech USB vendor `046d`,
-product `c287`. They use control transfers with shared access, leaving joystick
-input available to X-Plane. Linux retains evdev force feedback and sysfs LEDs.
+product `c287`. They use shared access, leaving joystick input available to
+X-Plane. Feature reports use control transfers. Force output report 2 requires
+the interrupt OUT endpoint (`01`, 64-byte packets): the connected firmware 1.42
+rejects `SET_REPORT(Output, 2)` on the control endpoint. macOS uses
+`IOHIDDeviceSetReport`; Windows uses overlapped `WriteFile`, checks the full
+report length, and cancels writes that exceed 100 ms. Linux retains evdev force
+feedback and sysfs LEDs.
 
 The layout below is based on the connected device's HID descriptor and the
 original author's [G940 Linux driver](https://github.com/chrisboyle/G940-linux).
@@ -20,6 +25,10 @@ including the report ID. Each axis record has the following spring fields:
 
 | Offset within axis | Size | Meaning |
 | --- | --- | --- |
+| 0 | 2 | Constant force, signed little endian |
+| 3 | 1 | Autocenter coefficient, signed |
+| 4 | 1 | Autocenter saturation, signed, in units of 256 |
+| 5 | 1 | Autocenter damping coefficient, signed |
 | 6 | 2 | Negative spring boundary, signed little endian |
 | 8 | 2 | Positive spring boundary, signed little endian |
 | 10 | 1 | Negative coefficient, signed |
@@ -32,10 +41,20 @@ Maximum saturation is 16384 for roll and 32767 for pitch, scaled by airspeed
 relative to Vne. Unused constant-force, autocenter and damper fields remain
 zero. Disabling or pausing the plugin sends a zeroed report with ID 2.
 
-`make probe` only opens the device and reads its LED report.
+Input report **1** is 21 bytes including its ID. Bit mask `0x20` in byte 20
+is set while the grip sensor is covered. With the sensor uncovered the firmware
+uses its idle centering settings, so an apparent centering force then does not
+validate the application's live force output.
+
+`make probe` only opens the device and reads its LED report and grip sensor.
 `build/tools/g940_probe --led-test` briefly writes a known pattern, reads it
-back, and restores the original state. `--force-test` applies a centered spring
-at 10% saturation for three seconds, then sends the stop report. Successful USB
-transfers do not prove that a powered motor produces the intended force; that
-requires checking the stick physically. Use `--seconds 10` to extend either
-test (1-30 seconds). Keep X-Plane closed during these tests.
+back, and restores the original state. `--force-test` compares a centered spring
+at 10% saturation with zero force. `--roll-test` and `--pitch-test` compare a
+constant force of 4000 with zero force on one axis; `--reverse` uses -4000.
+Each stage lasts three seconds by default; `--seconds 10` extends each stage
+(1-30 seconds). Each test describes the next comparison and waits for Enter.
+Force tests then require two seconds of continuous grip-sensor coverage,
+stream reports at approximately 50 Hz, and stop when the grip is released,
+input/output fails, or the process receives SIGINT/SIGTERM. Keep X-Plane closed.
+Successful USB transfers do not prove that a powered motor produces the
+intended force; that requires checking the stick physically.

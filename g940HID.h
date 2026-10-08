@@ -16,6 +16,7 @@ public:
     bool setFeature(const uint8_t *report, size_t length);
     bool getFeature(uint8_t *report, size_t length);
     bool setOutput(const uint8_t *report, size_t length);
+    bool readGrip(bool& covered);
     const std::string& error() const { return error_; }
 private:
     HIDDevice(const HIDDevice&) = delete;
@@ -24,6 +25,8 @@ private:
 #if IBM
     size_t featureLength_;
     size_t outputLength_;
+    size_t inputLength_;
+    void *writeEvent_;
 #endif
     std::string error_;
 };

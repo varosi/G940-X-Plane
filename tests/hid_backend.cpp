@@ -14,7 +14,7 @@ std::vector<std::vector<uint8_t>> features, outputs;
 namespace g940 {
 HIDDevice::HIDDevice() : handle_(nullptr)
 #if IBM
-    , featureLength_(0), outputLength_(0)
+    , featureLength_(0), outputLength_(0), inputLength_(0), writeEvent_(nullptr)
 #endif
 {}
 HIDDevice::~HIDDevice() { close(); }
