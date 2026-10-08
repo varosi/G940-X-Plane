@@ -144,8 +144,15 @@ were not felt, including direct USB transfers. A subsequent flight confirmed
 force feedback and exposed pitch-trim kicks. The updated spring model separates
 the trim target from stick motion, limits target changes, and adds light native
 G940 damping. A subsequent flight confirmed smoother trim without kicks and
-force release when paused with the grip covered. Stronger pitch resistance
-and further smoothing are being tested; see the
+force release when paused with the grip covered. The next flight confirmed
+smooth trim and a smooth one-second pause release, but requested more force
+and reported a kick when uncovering the grip. The latest candidate uses
+pitch coefficient 127, the highest positive value, and disables native idle
+centering while the plugin is enabled and connected. Both original idle
+settings are backed up before either is changed, read back after writes,
+kept across pauses, and restored on disable or normal exit. This affects the
+macOS/Windows backend; Linux retains its evdev lifecycle. Physical validation
+of the latest strength and grip-release behavior is pending; see the
 [hardware test findings](tools/HARDWARE_TESTS.md).
 
 For an optional diagnostic build, use a separate build directory so ordinary

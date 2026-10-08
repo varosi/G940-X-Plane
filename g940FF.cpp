@@ -30,6 +30,9 @@ void reportError() {
 }
 
 float flightLoopCallback(float elapsed, float, int, void *) {
+    if (!g940::prepareForceFeedback()) {
+        reportError(); forceReady = false; forceSmoother.reset(); return 5.0f;
+    }
     if (XPLMGetDatai(pausedRef)) {
         if (!forceReady) return 0.2f;
 #ifdef G940_DEBUG_FORCE
@@ -37,7 +40,9 @@ float flightLoopCallback(float elapsed, float, int, void *) {
 #endif
         const g940::ForceState state = forceSmoother.release(elapsed);
         if (state.speedRatio <= 0.0 || state.effectScale <= 0.0) {
-            g940::closeForceFeedback();
+            if (!g940::releaseForceFeedback()) {
+                reportError(); g940::closeForceFeedback();
+            }
             forceReady = false;
             forceSmoother.reset();
 #ifdef G940_DEBUG_FORCE
@@ -130,7 +135,7 @@ PLUGIN_API int XPluginEnable() {
 PLUGIN_API void XPluginDisable() {
     if (enabled) XPLMUnregisterFlightLoopCallback(flightLoopCallback, nullptr);
     enabled = false;
-    g940::closeForceFeedback();
+    if (!g940::closeForceFeedback()) reportError();
     forceReady = false;
     forceSmoother.reset();
 }

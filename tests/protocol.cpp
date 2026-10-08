@@ -18,11 +18,11 @@ int main() {
     assert(force[43] == 0xff && force[44] == 0x7f); // pitch saturation
     const auto halfSpeed = forceReport({0, 0, .5});
     assert(halfSpeed[13] == 0 && halfSpeed[14] == 0x20); // 50% roll saturation
-    assert(halfSpeed[43] == 0xff && halfSpeed[44] == 0x5f); // 75% pitch saturation
+    assert(halfSpeed[43] == 0xff && halfSpeed[44] == 0x7e); // 127/128 pitch saturation
     assert(springSaturationRatio(.9, 1) == 1); // strength never exceeds the device limit
     for (unsigned axis = 0; axis < 2; ++axis) {
-        assert(force[1 + 30 * axis + 10] == (axis == 0 ? 64 : 96));
-        assert(force[1 + 30 * axis + 11] == (axis == 0 ? 64 : 96));
+        assert(force[1 + 30 * axis + 10] == (axis == 0 ? 64 : 127));
+        assert(force[1 + 30 * axis + 11] == (axis == 0 ? 64 : 127));
         assert(force[1 + 30 * axis + 22] > 0);
         assert(force[1 + 30 * axis + 23] > 0);
     }
@@ -31,8 +31,8 @@ int main() {
     for (unsigned i = 1; i < stop.size(); ++i) assert(stop[i] == 0);
     assert(forceReport({.5, -.5, 1, 0, 0, 0}) == stop);
     const auto halfEffect = forceReport({0, 0, .5, 0, 0, .5});
-    assert(halfEffect[11] == 32 && halfEffect[41] == 48); // stiffness fades too
-    assert(halfEffect[43] == 0xff && halfEffect[44] == 0x2f); // 37.5% pitch cap
+    assert(halfEffect[11] == 32 && halfEffect[41] == 63); // positive signed stiffness fades too
+    assert(halfEffect[43] == 0x7f && halfEffect[44] == 0x3f); // half of strengthened pitch cap
     const auto stationary = calculateForce(0, 0, 0, 100, 0, 0, 0);
     assert(stationary.speedRatio == 0);
     assert(calculateForce(0, 0, 100, 0, 0, 0, 0).speedRatio == 0);

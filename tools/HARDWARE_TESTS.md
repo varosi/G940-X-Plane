@@ -1,9 +1,10 @@
 # G940 macOS force-feedback investigation
 
 Status on 2026-10-09: live pitch force and spring centering are physically
-confirmed at higher levels and in flight. The updated model felt smoother
-without trim kicks; further smoothing and stronger pitch resistance were
-requested.
+confirmed at higher levels and in flight. The latest flight confirmed smooth
+trim and pause release; stronger force and removal of a grip-release kick
+were requested. The newest strength and idle-centering changes are awaiting
+physical validation.
 Accepted USB writes alone are not evidence that the motors rendered an effect.
 
 The connected device reports USB ID `046d:c287` and device version `0x0142`.
@@ -118,15 +119,13 @@ airspeed ratio from each axis's actual spring saturation.
 Pitch-center changes use a 250 ms exponential filter, with a reduced slew
 limit of 0.25 normalized units per second. This filters small trim steps too
 and tapers toward the new neutral position. Roll retains its previous slew
-limit of 0.5 per second. Force-release behavior on pause remains immediate.
-The additional pitch filter awaits flight validation.
+limit of 0.5 per second. At this stage force release on pause was immediate.
 
 The follow-up grip-verified bench comparison used coefficient 64 with 50%
 saturation, then coefficient 96 with 75% saturation. After the stronger stage,
 the user centered the stick for three seconds, the effect faded over two
 seconds, and the test held zero force for ten seconds. The user felt stronger
-resistance and reported a perfectly smooth release. The additional pitch trim
-filter still needs flight validation. The 1.5 pitch strength factor permits
+resistance and reported a perfectly smooth release. The 1.5 pitch strength factor permits
 100% spring saturation at two-thirds of Vne, approximately 125 knots true
 airspeed in the tested aircraft with Vne 187 knots.
 
@@ -143,4 +142,35 @@ then sends zero force and closes the device. Resuming partway through the
 fade restores strength gradually. Disabling, backend errors, zero airspeed
 and invalid Vne retain their immediate stops. Tests cover the fade midpoint,
 zero-force completion, delayed callbacks and resume during a fade. This pause
-release and the additional pitch filter await physical flight validation.
+release and the additional pitch filter were checked in the flight below.
+
+## Flight with stronger pitch and one-second release
+
+The TB10/TB20 flight produced 245 force samples and ended with a normal X-Plane
+shutdown. Of those samples, 200 were above 97 knots with the connection ramp
+settled and no pause fade in progress. They covered 100.0-172.9 knots true
+airspeed and 80.2-100% pitch spring saturation. The log recorded two completed
+pause fades and no force-backend errors. The user reported smooth trimming
+and smooth pausing, but requested greater force. Kicks occurred only when
+transitioning from hand on to hand off.
+
+## Maximum positive pitch stiffness and native idle-centering ownership
+
+The next candidate raises pitch coefficient 96 to 127, about 32% more stiffness,
+while keeping the existing saturation ceiling. The associated airspeed strength
+factor is now 127/64, allowing full pitch saturation at about 94 knots true
+airspeed for Vne 187 knots. The trim filter, pause fade, damping and roll setting
+are unchanged. Offline firmware emulation at full pitch saturation produced
+PWM magnitudes 459 and 517 for coefficients 96 and 127 at position 2000;
+at position 8000 both were capped at 768. This predicts increased resistance
+near the trim center, not increased maximum torque once the effect is capped.
+
+The user selected temporary removal of hands-off centering while the plugin
+is enabled. The native backend backs up both idle-axis features before
+modifying either, writes zero idle settings, and checks their readback. The
+original settings are retained across pause/resume and restored and checked
+on disable or normal exit. Failure while initializing triggers a restore of
+both axes. Tests cover pause retention, failure rollback, incorrect readback,
+unexpected report IDs and attempting both restores after a failure. Linux
+retains its evdev pause/close behavior and receives the same stronger pitch
+model. Physical strength and grip-release validation remain pending.

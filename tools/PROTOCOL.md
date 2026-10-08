@@ -39,18 +39,21 @@ including the report ID. Each axis record has the following spring fields:
 | 24 | 2 | Velocity damping saturation, signed little endian |
 
 Equal boundaries move the spring center without a deadband. Centers range
-from -32767 to 32767. Coefficients are 64 for roll and 96 for pitch; Linux evdev
+from -32767 to 32767. Coefficients are 64 for roll and 127 for pitch; 127 is
+the largest positive signed byte. Linux evdev
 uses the equivalent values shifted left by eight bits.
 Maximum saturation is 16384 for roll and 32767 for pitch. The base airspeed
 ratio is true airspeed divided by Vne; roll saturation uses that ratio and
-pitch saturation uses 1.5 times the ratio, capped at 1.0. This increases both
+pitch saturation uses 127/64 times the ratio, capped at 1.0. This increases both
 pitch stiffness and force capacity together. The first velocity damping
 channel uses coefficient 8 and
 saturation up to 4096, also scaled by airspeed. Constant-force, autocenter,
 second spring and second damping fields remain zero. Disabling or pausing the
 plugin sends a zeroed report with ID 2. Pausing fades spring stiffness,
 saturation, and native damping together over about one second before sending
-zero and closing the force device. A cubic fade tapers both ends. Resuming
+zero and releasing the live effect. The native connection stays open across
+pauses to retain its idle-centering backup; Linux releases its evdev effect
+and device as before. A cubic fade tapers both ends. Resuming
 during the fade restores strength gradually; disabling and backend errors
 still stop immediately.
 
@@ -69,7 +72,17 @@ with the same smoothed trim target.
 Input report **1** is 21 bytes including its ID. Bit mask `0x20` in byte 20
 is set while the grip sensor is covered. With the sensor uncovered the firmware
 uses its idle centering settings, so an apparent centering force then does not
-validate the application's live force output.
+validate the application's live force output. The macOS/Windows plugin now
+temporarily disables that idle centering to avoid switching to a different
+neutral position when the hand is removed. It reads and backs up features
+**5** (roll) and **6** (pitch), each four bytes including its ID, before writing
+`05 00 00 00` and `06 00 00 00`. Each write is read back and checked. Pausing
+keeps the backup and disabled idle settings; disabling or normal shutdown
+restores both originals and checks them before closing the connection. If
+initialization fails after modifying an axis, both restores are attempted.
+The LED plugin does not change these settings. No firmware or saved settings
+are written. The firmware still stops live force immediately when the grip
+is uncovered; this change removes the replacement hands-off centering force.
 
 `make probe` only opens the device and reads its LED report and grip sensor.
 `build/tools/g940_probe --led-test` briefly writes a known pattern, reads it

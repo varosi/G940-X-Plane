@@ -11,7 +11,7 @@ enum LEDColour { OFF = 0, RED = 1, GREEN = 2, AMBER = RED | GREEN };
 typedef std::array<LEDColour, 8> LEDState;
 // The G940 uses signed 8-bit spring coefficients; evdev uses these values
 // shifted left by eight bits. Keep the native and Linux stiffness consistent.
-constexpr unsigned springCoefficients[2] = {64, 96};
+constexpr unsigned springCoefficients[2] = {64, 127};
 struct ForceState {
     // Spring centers are independent of the measured stick position.
     double roll;

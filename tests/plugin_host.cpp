@@ -26,6 +26,7 @@ std::map<std::string, Ref> refs;
 XPLMFlightLoop_f callback = nullptr;
 int registrations = 0, unregistrations = 0;
 int opens = 0, closes = 0;
+int releases = 0;
 bool deviceOpen = false, allowOpen = true, allowUpdate = true;
 bool missingRef = false;
 g940::LEDState observedLEDs;
@@ -60,8 +61,10 @@ void XPLMDebugString(const char *) {}
 }
 
 namespace g940 {
+bool prepareForceFeedback() { return true; }
 bool openForceFeedback() { ++opens; return deviceOpen = allowOpen; }
-void closeForceFeedback() { if (deviceOpen) ++closes; deviceOpen = false; }
+bool releaseForceFeedback() { ++releases; return true; }
+bool closeForceFeedback() { if (deviceOpen) ++closes; deviceOpen = false; return true; }
 bool updateForceFeedback(const ForceState& state) {
     assert(deviceOpen); observedForce = state;
     if (!allowUpdate) deviceOpen = false;
@@ -133,7 +136,7 @@ int main() {
     assert(observedForce.speedRatio == 0);
     refs["sim/time/paused"].value = 1;
     callback(0, 0, 0, nullptr);
-    assert(!deviceOpen && closes == 1);
+    assert(deviceOpen && releases == 1 && closes == 0);
     refs["sim/time/paused"].value = 0;
     callback(0, 0, 0, nullptr);
     assert(deviceOpen);
@@ -141,16 +144,17 @@ int main() {
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
     refs["sim/time/paused"].value = 1;
     for (int i = 0; i < 25; ++i) callback(.02f, 0, 0, nullptr);
-    assert(deviceOpen && closes == 1);
+    assert(deviceOpen && releases == 1 && closes == 0);
     assert(std::abs(observedForce.effectScale - .5) < .001);
     refs["sim/time/paused"].value = 0;
     callback(.02f, 0, 0, nullptr);
     assert(observedForce.effectScale > .5 && observedForce.effectScale < .53);
     refs["sim/time/paused"].value = 1;
     for (int i = 0; i < 60; ++i) callback(.02f, 0, 0, nullptr);
-    assert(!deviceOpen && closes == 2);
+    assert(deviceOpen && releases == 2 && closes == 0);
+    const int opensBeforePausedCallback = opens;
     callback(.2f, 0, 0, nullptr);
-    assert(!deviceOpen); // paused callback must not reopen after completing the fade
+    assert(opens == opensBeforePausedCallback); // paused callback must not restart live effects
     refs["sim/time/paused"].value = 0;
     callback(.02f, 0, 0, nullptr);
     assert(deviceOpen && observedForce.speedRatio <= .020001);

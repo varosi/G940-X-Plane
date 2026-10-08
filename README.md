@@ -24,11 +24,13 @@ confirmed pitch constant force and spring centering at higher levels, with zero
 force stopping both effects. A subsequent flight confirmed force feedback but
 revealed pitch-trim kicks. Keeping trim targets independent of stick motion
 and smoothing target changes produced a subsequent flight without trim kicks.
-Pause release was also confirmed with the grip covered. Stronger pitch
-resistance and further smoothing are being tested. See the
+The latest flight confirmed smooth trim and a smooth one-second pause release,
+but force was still too weak and releasing the grip caused a kick. Pitch
+stiffness has been increased again. The native backend temporarily disables
+hands-off centering while enabled and connected, restoring the original
+settings on disable or normal exit. These latest changes need a physical check.
+See the
 [hardware test findings](tools/HARDWARE_TESTS.md).
-The plugin now fades force out over about one second when paused; this release
-change is awaiting a flight check with the stronger pitch setting.
 Windows and Linux builds have been cross-compiled, but the new Windows
 backend still needs hardware testing on Windows. macOS/Windows support is
 G940-specific; Linux force feedback may also work with other evdev devices.
