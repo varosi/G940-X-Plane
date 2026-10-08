@@ -83,3 +83,14 @@ sensor remained covered throughout. The user reported smooth resistance
 during the active spring, with a small jump when force switched off. This
 comparison does not validate trim changes in flight; force removal was
 immediate and could release a loaded stick.
+
+## Flight with the updated spring model
+
+The next TB10/TB20 flight used the updated diagnostic plugin and produced 132
+force trace samples, including 64 above 97 knots. That portion covered
+97.3-129.8 knots true airspeed and 52.0-69.4% spring saturation. Elevator trim
+varied from -0.175 to 0.399, with pitch spring centers from -0.328 to 0.552.
+There were no force-backend errors. A read-only grip check during flight
+detected the sensor as covered, and X-Plane subsequently shut down normally.
+The user's assessment of trim kicks, steady pressure and pause behavior is
+pending; these log values alone do not confirm the physical feel.
