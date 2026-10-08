@@ -122,9 +122,12 @@ int main() {
     callback(0, 0, 0, nullptr);
     assert(observedLEDs[2] == g940::GREEN);
 #else
+    for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
     assert(std::abs(observedForce.speedRatio - .5) < .001);
-    assert(std::abs(observedForce.roll + .3) < .001);
-    assert(std::abs(observedForce.pitch + .3) < .001);
+    assert(std::abs(observedForce.roll) < .001);
+    assert(std::abs(observedForce.pitch) < .001);
+    assert(std::abs(observedForce.rollForce + .3) < .001);
+    assert(std::abs(observedForce.pitchForce + .3) < .001);
     refs["sim/aircraft/view/acf_Vne"].value = 0;
     callback(0, 0, 0, nullptr);
     assert(observedForce.speedRatio == 0);

@@ -140,8 +140,11 @@ Current macOS flight testing confirms LED changes for flaps and landing lights,
 but no force feedback was felt during the initial flight. Subsequent bench tests
 confirmed live pitch constant force at 16000/32767 and pitch spring centering at
 50% saturation; both effects stopped with zero force. Lower-level comparisons
-were not felt, including direct USB transfers. In-flight force levels still need
-investigation; see the [hardware test findings](tools/HARDWARE_TESTS.md).
+were not felt, including direct USB transfers. A subsequent flight confirmed
+force feedback and exposed pitch-trim kicks. The updated spring model separates
+the trim target from stick motion, limits target changes, and adds light native
+G940 damping. Physical validation of the new trim behavior is in progress; see
+the [hardware test findings](tools/HARDWARE_TESTS.md).
 
 For an optional diagnostic build, use a separate build directory so ordinary
 and diagnostic objects are not mixed:

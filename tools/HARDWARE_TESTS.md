@@ -1,7 +1,8 @@
 # G940 macOS force-feedback investigation
 
 Status on 2026-10-09: live pitch force and spring centering are physically
-confirmed at higher levels. In-flight force levels remain under investigation.
+confirmed at higher levels and in flight. Pitch-trim kicks remain under
+investigation, with an updated model prepared for validation.
 Accepted USB writes alone are not evidence that the motors rendered an effect.
 
 The connected device reports USB ID `046d:c287` and device version `0x0142`.
@@ -54,7 +55,31 @@ it does not observe the physical USB bus or read the installed firmware image.
 No firmware was flashed.
 
 Changing the hub alone did not make the lower-level effect perceptible. Raising
-the constant-force magnitude did. The next step is to inspect real X-Plane
-airspeed, Vne and computed spring levels using the optional `G940_DEBUG_FORCE`
-build. No gain or force-model change has been made based on subjective bench
-results alone.
+the constant-force magnitude did.
+
+## First diagnostic flight
+
+The TB10/TB20 flight produced 121 force trace samples. Aircraft Vne was 187
+knots, and the higher-speed portion covered 97.2-149.8 knots true airspeed with
+52.0-80.1% spring saturation. There were no force-backend errors, and a separate
+read-only check detected the grip as covered during flight. The user felt force
+feedback but reported strange pitch-trim kicks near zero vertical speed and
+expected a stronger steady load when out of trim. Pause behavior was not
+checked physically.
+
+The original spring model made its center a function of the measured stick
+position on every frame and applied trim changes immediately. The updated
+model removes stick position from the spring-center calculation, limits trim
+and angle-of-attack center changes, ramps force saturation after connecting,
+and uses light damping on the native G940 path. The Linux constant-force
+fallback still calculates stick-dependent restoring force separately. Software
+tests check target independence, bounded transitions, restart ramping and
+immediate zero-airspeed stops. The updated physical trim feel still needs to be
+confirmed.
+
+A separate pitch-only bench comparison used 50% spring saturation with the
+new damping for 10 seconds, followed by 10 seconds of zero force. The grip
+sensor remained covered throughout. The user reported smooth resistance
+during the active spring, with a small jump when force switched off. This
+comparison does not validate trim changes in flight; force removal was
+immediate and could release a loaded stick.

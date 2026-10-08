@@ -113,8 +113,8 @@ bool updateForceFeedback(const ForceState& state) {
                 clamp(state.speedRatio, 0.0, 1.0) * maximums[axis];
         }
     } else {
-        const double roll = std::isfinite(state.roll) ? state.roll : 0.0;
-        const double pitch = std::isfinite(state.pitch) ? state.pitch : 0.0;
+        const double roll = std::isfinite(state.rollForce) ? state.rollForce : 0.0;
+        const double pitch = std::isfinite(state.pitchForce) ? state.pitchForce : 0.0;
         effect.u.constant.level = clamp(std::hypot(roll, pitch) * state.speedRatio, 0.0, 1.0) * 0x7fff;
         const double angle = std::atan2(-roll, pitch);
         const int direction = angle * 32768.0 / std::acos(-1.0);

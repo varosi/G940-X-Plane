@@ -9,6 +9,7 @@
 #include "XPLMProcessing.h"
 #include "XPLMUtilities.h"
 #include "g940Backend.h"
+#include "g940ForceModel.h"
 
 #ifndef XPLM300
 #error This plugin requires the XPLM300 API
@@ -18,6 +19,7 @@ namespace {
 XPLMDataRef rollRef, pitchRef, speedRef, vneRef, alphaRef, eTrimRef, aTrimRef, pausedRef;
 bool enabled = false;
 bool forceReady = false;
+g940::ForceSmoother forceSmoother;
 #ifdef G940_DEBUG_FORCE
 std::chrono::steady_clock::time_point nextForceTrace;
 #endif
@@ -27,15 +29,17 @@ void reportError() {
     XPLMDebugString(message.c_str());
 }
 
-float flightLoopCallback(float, float, int, void *) {
+float flightLoopCallback(float elapsed, float, int, void *) {
     if (XPLMGetDatai(pausedRef)) {
         if (forceReady) g940::closeForceFeedback();
         forceReady = false;
+        forceSmoother.reset();
         return 0.2f;
     }
     if (!forceReady) {
         if (!g940::openForceFeedback()) { reportError(); return 5.0f; }
         forceReady = true;
+        forceSmoother.reset();
 #ifdef G940_DEBUG_FORCE
         nextForceTrace = std::chrono::steady_clock::time_point();
 #endif
@@ -45,8 +49,9 @@ float flightLoopCallback(float, float, int, void *) {
     const float speed = XPLMGetDataf(speedRef), vne = XPLMGetDataf(vneRef);
     const float alpha = XPLMGetDataf(alphaRef);
     const float elevatorTrim = XPLMGetDataf(eTrimRef), aileronTrim = XPLMGetDataf(aTrimRef);
-    const g940::ForceState state = g940::calculateForce(
+    const g940::ForceState target = g940::calculateForce(
         roll, pitch, speed, vne, alpha, elevatorTrim, aileronTrim);
+    const g940::ForceState state = forceSmoother.update(target, elapsed);
 #ifdef G940_DEBUG_FORCE
     const auto now = std::chrono::steady_clock::now();
     if (now >= nextForceTrace) {
@@ -106,6 +111,7 @@ PLUGIN_API void XPluginDisable() {
     enabled = false;
     g940::closeForceFeedback();
     forceReady = false;
+    forceSmoother.reset();
 }
 
 PLUGIN_API void XPluginStop() { XPluginDisable(); }

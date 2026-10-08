@@ -34,12 +34,27 @@ including the report ID. Each axis record has the following spring fields:
 | 10 | 1 | Negative coefficient, signed |
 | 11 | 1 | Positive coefficient, signed |
 | 12 | 2 | Spring saturation, signed little endian |
+| 22 | 1 | Negative velocity damping coefficient, signed |
+| 23 | 1 | Positive velocity damping coefficient, signed |
+| 24 | 2 | Velocity damping saturation, signed little endian |
 
 Equal boundaries move the spring center without a deadband. Centers range
 from -32767 to 32767. Coefficients are 64, matching the existing Linux model.
 Maximum saturation is 16384 for roll and 32767 for pitch, scaled by airspeed
-relative to Vne. Unused constant-force, autocenter and damper fields remain
-zero. Disabling or pausing the plugin sends a zeroed report with ID 2.
+relative to Vne. The first velocity damping channel uses coefficient 8 and
+saturation up to 4096, also scaled by airspeed. Constant-force, autocenter,
+second spring and second damping fields remain zero. Disabling or pausing the
+plugin sends a zeroed report with ID 2.
+
+The flight model derives roll center from aileron trim and pitch center from
+elevator trim and angle of attack. Stick movement does not change the spring
+center; the device's spring supplies the restoring force locally. Center
+changes are limited to 0.5 normalized units per second, and airspeed-dependent
+saturation ramps at up to 1.0 per second. A callback interval is capped at
+100 ms for these ramps so a delayed simulator frame cannot cause a large
+single-step change. Zero airspeed or invalid Vne stops the force immediately.
+The Linux constant-force fallback retains stick-dependent restoring force,
+with the same smoothed trim target.
 
 Input report **1** is 21 bytes including its ID. Bit mask `0x20` in byte 20
 is set while the grip sensor is covered. With the sensor uncovered the firmware
@@ -64,4 +79,4 @@ Successful USB transfers do not prove that a powered motor produces the
 intended force; that requires checking the stick physically.
 
 See [hardware test findings](HARDWARE_TESTS.md) for the macOS comparisons and
-the remaining unresolved force-output issue.
+the ongoing pitch-trim feel investigation.

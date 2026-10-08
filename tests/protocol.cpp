@@ -1,4 +1,5 @@
 #include "g940Protocol.h"
+#include "g940ForceModel.h"
 #include <cassert>
 #include <cstdio>
 #include <limits>
@@ -18,6 +19,8 @@ int main() {
     for (unsigned axis = 0; axis < 2; ++axis) {
         assert(force[1 + 30 * axis + 10] == 64);
         assert(force[1 + 30 * axis + 11] == 64);
+        assert(force[1 + 30 * axis + 22] > 0);
+        assert(force[1 + 30 * axis + 23] > 0);
     }
     const auto stop = stopReport();
     assert(stop[0] == 2);
@@ -30,5 +33,36 @@ int main() {
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const auto invalid = forceReport({nan, nan, nan});
     assert(invalid[7] == 0 && invalid[37] == 0 && invalid[13] == 0);
-    std::puts("Protocol and force bounds passed.");
+
+    // Stick motion must not move the spring's trim target along with the
+    // physical stick: doing so creates feedback around a moving neutral point.
+    const auto trimTarget = calculateForce(0, 0, 25.722222, 100, 0, .5, .1);
+    const auto displaced = calculateForce(.5, .5, 25.722222, 100, 0, .5, .1);
+    assert(trimTarget.roll == displaced.roll && trimTarget.pitch == displaced.pitch);
+    assert(trimTarget.rollForce > displaced.rollForce);
+    assert(trimTarget.pitchForce > displaced.pitchForce);
+    assert(displaced.pitchForce == 0); // held at the pitch trim target
+    const auto untrimmed = calculateForce(0, .5, 25.722222, 100, 0, 0, 0);
+    assert(untrimmed.pitchForce < displaced.pitchForce);
+
+    ForceSmoother smoother;
+    ForceState previous;
+    for (int i = 0; i < 100; ++i) {
+        const auto next = smoother.update(trimTarget, .02);
+        assert(next.pitch >= previous.pitch);
+        assert(next.pitch - previous.pitch <= .010001);
+        assert(next.speedRatio - previous.speedRatio <= .020001);
+        previous = next;
+    }
+    assert(std::abs(previous.pitch - trimTarget.pitch) < 1e-6);
+    assert(std::abs(previous.speedRatio - trimTarget.speedRatio) < 1e-6);
+    const auto reverseTrim = calculateForce(0, 0, 25.722222, 100, 0, -.5, -.1);
+    const auto afterLongFrame = smoother.update(reverseTrim, 100);
+    assert(previous.pitch - afterLongFrame.pitch <= .050001);
+    const auto noAirspeed = smoother.update(stationary, .02);
+    assert(noAirspeed.speedRatio == 0); // stop immediately, even during a ramp
+    smoother.reset();
+    const auto restarted = smoother.update(trimTarget, .02);
+    assert(restarted.pitch <= .010001 && restarted.speedRatio <= .020001);
+    std::puts("Force packets, stable trim targets, and bounded transitions passed.");
 }
