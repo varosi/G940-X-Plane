@@ -11,7 +11,12 @@ public:
         // A long simulator frame must not turn a trim change into one jump.
         const double dt = clamp(elapsed, 0.0, 0.1);
         state_.roll = approach(state_.roll, clamp(target.roll, -1.0, 1.0), 0.5 * dt);
-        state_.pitch = approach(state_.pitch, clamp(target.pitch, -1.0, 1.0), 0.5 * dt);
+        // Filter small trim/AoA changes too, and taper into the new center.
+        // The lower slew rate also offsets the stronger pitch spring.
+        const double pitchTarget = clamp(target.pitch, -1.0, 1.0);
+        const double filteredPitch = state_.pitch +
+            (pitchTarget - state_.pitch) * (-std::expm1(-dt / 0.25));
+        state_.pitch = approach(state_.pitch, filteredPitch, 0.25 * dt);
         const double ratio = clamp(target.speedRatio, 0.0, 1.0);
         state_.speedRatio = ratio == 0.0 ? 0.0 : approach(state_.speedRatio, ratio, dt);
         // Keep immediate stick-dependent restoring force on the Linux

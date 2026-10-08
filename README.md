@@ -22,9 +22,11 @@ In-flight testing confirmed that the LEDs respond to flaps and landing lights.
 No force feedback was felt during the initial flight. Subsequent bench testing
 confirmed pitch constant force and spring centering at higher levels, with zero
 force stopping both effects. A subsequent flight confirmed force feedback but
-revealed pitch-trim kicks. The spring model now keeps trim targets independent
-of stick motion and smooths target changes; physical validation of the updated
-trim behavior is in progress. See the [hardware test findings](tools/HARDWARE_TESTS.md).
+revealed pitch-trim kicks. Keeping trim targets independent of stick motion
+and smoothing target changes produced a subsequent flight without trim kicks.
+Pause release was also confirmed with the grip covered. Stronger pitch
+resistance and further smoothing are being tested. See the
+[hardware test findings](tools/HARDWARE_TESTS.md).
 Windows and Linux builds have been cross-compiled, but the new Windows
 backend still needs hardware testing on Windows. macOS/Windows support is
 G940-specific; Linux force feedback may also work with other evdev devices.

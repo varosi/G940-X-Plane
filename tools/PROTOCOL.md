@@ -39,9 +39,13 @@ including the report ID. Each axis record has the following spring fields:
 | 24 | 2 | Velocity damping saturation, signed little endian |
 
 Equal boundaries move the spring center without a deadband. Centers range
-from -32767 to 32767. Coefficients are 64, matching the existing Linux model.
-Maximum saturation is 16384 for roll and 32767 for pitch, scaled by airspeed
-relative to Vne. The first velocity damping channel uses coefficient 8 and
+from -32767 to 32767. Coefficients are 64 for roll and 96 for pitch; Linux evdev
+uses the equivalent values shifted left by eight bits.
+Maximum saturation is 16384 for roll and 32767 for pitch. The base airspeed
+ratio is true airspeed divided by Vne; roll saturation uses that ratio and
+pitch saturation uses 1.5 times the ratio, capped at 1.0. This increases both
+pitch stiffness and force capacity together. The first velocity damping
+channel uses coefficient 8 and
 saturation up to 4096, also scaled by airspeed. Constant-force, autocenter,
 second spring and second damping fields remain zero. Disabling or pausing the
 plugin sends a zeroed report with ID 2.
@@ -49,7 +53,9 @@ plugin sends a zeroed report with ID 2.
 The flight model derives roll center from aileron trim and pitch center from
 elevator trim and angle of attack. Stick movement does not change the spring
 center; the device's spring supplies the restoring force locally. Center
-changes are limited to 0.5 normalized units per second, and airspeed-dependent
+changes are limited to 0.5 normalized units per second for roll. Pitch uses a
+250 ms exponential filter and a lower limit of 0.25 per second, so small trim
+steps are filtered and movement tapers into the new center. Airspeed-dependent
 saturation ramps at up to 1.0 per second. A callback interval is capped at
 100 ms for these ramps so a delayed simulator frame cannot cause a large
 single-step change. Zero airspeed or invalid Vne stops the force immediately.

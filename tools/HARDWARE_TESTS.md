@@ -1,8 +1,9 @@
 # G940 macOS force-feedback investigation
 
 Status on 2026-10-09: live pitch force and spring centering are physically
-confirmed at higher levels and in flight. Pitch-trim kicks remain under
-investigation, with an updated model prepared for validation.
+confirmed at higher levels and in flight. The updated model felt smoother
+without trim kicks; further smoothing and stronger pitch resistance were
+requested.
 Accepted USB writes alone are not evidence that the motors rendered an effect.
 
 The connected device reports USB ID `046d:c287` and device version `0x0142`.
@@ -74,8 +75,8 @@ and angle-of-attack center changes, ramps force saturation after connecting,
 and uses light damping on the native G940 path. The Linux constant-force
 fallback still calculates stick-dependent restoring force separately. Software
 tests check target independence, bounded transitions, restart ramping and
-immediate zero-airspeed stops. The updated physical trim feel still needs to be
-confirmed.
+immediate zero-airspeed stops. The flight observation below confirms improved
+trim feel with this model.
 
 A separate pitch-only bench comparison used 50% spring saturation with the
 new damping for 10 seconds, followed by 10 seconds of zero force. The grip
@@ -92,5 +93,44 @@ force trace samples, including 64 above 97 knots. That portion covered
 varied from -0.175 to 0.399, with pitch spring centers from -0.328 to 0.552.
 There were no force-backend errors. A read-only grip check during flight
 detected the sensor as covered, and X-Plane subsequently shut down normally.
-The user's assessment of trim kicks, steady pressure and pause behavior is
-pending; these log values alone do not confirm the physical feel.
+The user reported much smoother trim changes without kicks, while requesting
+even smoother transitions. Pausing with the grip covered released the force;
+with the grip uncovered, the firmware's idle centering remained active. Force
+was still much weaker than on the user's real airplane.
+
+## Stronger pitch spring and further smoothing
+
+An initial bench comparison raised the pitch spring coefficient from 64 to 96
+while keeping 50% saturation. The grip remained covered throughout. The user
+felt little change in strength and again noted a kick when switching to zero
+force. Offline firmware emulation found that both settings reach the same cap
+at larger deflections: at position 8000 both produced PWM magnitude 525.
+Raising the stronger setting's cap to 75% produced magnitude 646 instead.
+These are modeled controller outputs, not measurements of physical torque.
+
+The next candidate raises both pitch stiffness and pitch saturation by a
+factor of 1.5, capped at the device's existing maximum. Roll retains its
+coefficient of 64 and its previous saturation. Linux evdev uses the equivalent
+coefficients and saturation; its constant-force fallback increases the pitch
+demand by the same factor of 1.5. Diagnostic traces now distinguish the base
+airspeed ratio from each axis's actual spring saturation.
+
+Pitch-center changes use a 250 ms exponential filter, with a reduced slew
+limit of 0.25 normalized units per second. This filters small trim steps too
+and tapers toward the new neutral position. Roll retains its previous slew
+limit of 0.5 per second. Force-release behavior on pause remains immediate.
+The additional pitch filter awaits flight validation.
+
+The follow-up grip-verified bench comparison used coefficient 64 with 50%
+saturation, then coefficient 96 with 75% saturation. After the stronger stage,
+the user centered the stick for three seconds, the effect faded over two
+seconds, and the test held zero force for ten seconds. The user felt stronger
+resistance and reported a perfectly smooth release. The additional pitch trim
+filter still needs flight validation. The 1.5 pitch strength factor permits
+100% spring saturation at two-thirds of Vne, approximately 125 knots true
+airspeed in the tested aircraft with Vne 187 knots.
+
+A further grip-verified comparison kept coefficient 96 and compared 75% with
+100% pitch spring saturation. The user felt stronger resistance at 100%, but
+requested a slightly smoother release after the two-second fade. No firmware
+or idle-centering settings were changed during these spring comparisons.

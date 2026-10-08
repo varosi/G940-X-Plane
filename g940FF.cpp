@@ -58,9 +58,12 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         char message[384];
         std::snprintf(message, sizeof(message),
             "G940 FF trace: TAS=%.2f m/s Vne=%.2f kt ratio=%.3f "
-            "yoke=(%.3f,%.3f) trim=(%.3f,%.3f) alpha=%.2f centers=(%.3f,%.3f)\n",
+            "yoke=(%.3f,%.3f) trim=(%.3f,%.3f) alpha=%.2f centers=(%.3f,%.3f) "
+            "spring=(%.3f,%.3f)\n",
             speed, vne, state.speedRatio, roll, pitch, aileronTrim, elevatorTrim,
-            alpha, state.roll, state.pitch);
+            alpha, state.roll, state.pitch,
+            g940::springSaturationRatio(state.speedRatio, 0),
+            g940::springSaturationRatio(state.speedRatio, 1));
         XPLMDebugString(message);
         nextForceTrace = now + std::chrono::seconds(2);
     }

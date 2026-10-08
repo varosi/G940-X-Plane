@@ -108,13 +108,13 @@ bool updateForceFeedback(const ForceState& state) {
         for (unsigned axis = 0; axis < 2; ++axis) {
             auto& condition = effect.u.condition[axis];
             condition.center = clamp(centers[axis], -1.0, 1.0) * 0x7fff;
-            condition.left_coeff = condition.right_coeff = 0x4000;
+            condition.left_coeff = condition.right_coeff = springCoefficients[axis] << 8;
             condition.left_saturation = condition.right_saturation =
-                clamp(state.speedRatio, 0.0, 1.0) * maximums[axis];
+                springSaturationRatio(state.speedRatio, axis) * maximums[axis];
         }
     } else {
-        const double roll = std::isfinite(state.rollForce) ? state.rollForce : 0.0;
-        const double pitch = std::isfinite(state.pitchForce) ? state.pitchForce : 0.0;
+        const double roll = std::isfinite(state.rollForce) ? state.rollForce * springGain(0) : 0.0;
+        const double pitch = std::isfinite(state.pitchForce) ? state.pitchForce * springGain(1) : 0.0;
         effect.u.constant.level = clamp(std::hypot(roll, pitch) * state.speedRatio, 0.0, 1.0) * 0x7fff;
         const double angle = std::atan2(-roll, pitch);
         const int direction = angle * 32768.0 / std::acos(-1.0);

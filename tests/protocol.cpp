@@ -16,9 +16,13 @@ int main() {
     assert(force[37] == 0xff && force[38] == 0x7f); // pitch center
     assert(force[13] == 0 && force[14] == 0x40); // roll saturation
     assert(force[43] == 0xff && force[44] == 0x7f); // pitch saturation
+    const auto halfSpeed = forceReport({0, 0, .5});
+    assert(halfSpeed[13] == 0 && halfSpeed[14] == 0x20); // 50% roll saturation
+    assert(halfSpeed[43] == 0xff && halfSpeed[44] == 0x5f); // 75% pitch saturation
+    assert(springSaturationRatio(.9, 1) == 1); // strength never exceeds the device limit
     for (unsigned axis = 0; axis < 2; ++axis) {
-        assert(force[1 + 30 * axis + 10] == 64);
-        assert(force[1 + 30 * axis + 11] == 64);
+        assert(force[1 + 30 * axis + 10] == (axis == 0 ? 64 : 96));
+        assert(force[1 + 30 * axis + 11] == (axis == 0 ? 64 : 96));
         assert(force[1 + 30 * axis + 22] > 0);
         assert(force[1 + 30 * axis + 23] > 0);
     }
@@ -47,22 +51,34 @@ int main() {
 
     ForceSmoother smoother;
     ForceState previous;
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < 250; ++i) {
         const auto next = smoother.update(trimTarget, .02);
         assert(next.pitch >= previous.pitch);
-        assert(next.pitch - previous.pitch <= .010001);
+        assert(next.pitch - previous.pitch <= .005001);
         assert(next.speedRatio - previous.speedRatio <= .020001);
         previous = next;
     }
-    assert(std::abs(previous.pitch - trimTarget.pitch) < 1e-6);
+    assert(std::abs(previous.pitch - trimTarget.pitch) < 1e-4);
     assert(std::abs(previous.speedRatio - trimTarget.speedRatio) < 1e-6);
     const auto reverseTrim = calculateForce(0, 0, 25.722222, 100, 0, -.5, -.1);
     const auto afterLongFrame = smoother.update(reverseTrim, 100);
-    assert(previous.pitch - afterLongFrame.pitch <= .050001);
+    assert(previous.pitch - afterLongFrame.pitch <= .025001);
     const auto noAirspeed = smoother.update(stationary, .02);
     assert(noAirspeed.speedRatio == 0); // stop immediately, even during a ramp
     smoother.reset();
     const auto restarted = smoother.update(trimTarget, .02);
-    assert(restarted.pitch <= .010001 && restarted.speedRatio <= .020001);
+    assert(restarted.pitch <= .005001 && restarted.speedRatio <= .020001);
+
+    // Small trim steps must be filtered as well as large changes: the old
+    // slew limiter applied a small step in one frame.
+    ForceSmoother smallTrim;
+    const ForceState smallTarget(0, .004, .5);
+    const auto firstSmallStep = smallTrim.update(smallTarget, .02);
+    assert(firstSmallStep.pitch > 0 && firstSmallStep.pitch < .001);
+    assert(firstSmallStep.pitch < smallTarget.pitch);
+    auto settled = firstSmallStep;
+    for (int i = 0; i < 100; ++i) settled = smallTrim.update(smallTarget, .02);
+    assert(std::abs(settled.pitch - smallTarget.pitch) < 1e-5);
+    assert(settled.pitch <= smallTarget.pitch); // no overshoot
     std::puts("Force packets, stable trim targets, and bounded transitions passed.");
 }

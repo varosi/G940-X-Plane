@@ -143,8 +143,10 @@ confirmed live pitch constant force at 16000/32767 and pitch spring centering at
 were not felt, including direct USB transfers. A subsequent flight confirmed
 force feedback and exposed pitch-trim kicks. The updated spring model separates
 the trim target from stick motion, limits target changes, and adds light native
-G940 damping. Physical validation of the new trim behavior is in progress; see
-the [hardware test findings](tools/HARDWARE_TESTS.md).
+G940 damping. A subsequent flight confirmed smoother trim without kicks and
+force release when paused with the grip covered. Stronger pitch resistance
+and further smoothing are being tested; see the
+[hardware test findings](tools/HARDWARE_TESTS.md).
 
 For an optional diagnostic build, use a separate build directory so ordinary
 and diagnostic objects are not mixed:
@@ -157,7 +159,8 @@ make install BUILDDIR=build/force-debug CPPFLAGS=-DG940_DEBUG_FORCE=1 XP_INSTALL
 This logs `G940 FF trace:` lines in X-Plane's `Log.txt` every two seconds while
 the force device is connected and the simulator is unpaused. The lines record
 airspeed, aircraft Vne, the calculated speed ratio, yoke inputs, trim, angle of
-attack, and spring centers. This adds logging without changing the force model.
+attack, spring centers, and each axis's spring saturation after the strength
+adjustment. This adds logging without changing the force model.
 To return to an ordinary build, install from the default `build` directory.
 
 In a loaded flight, test flap and landing-light changes, then compare stick
