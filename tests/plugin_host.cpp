@@ -131,6 +131,12 @@ int main() {
     assert(std::abs(observedForce.pitch) < .001);
     assert(std::abs(observedForce.rollForce + .3) < .001);
     assert(std::abs(observedForce.pitchForce + .3) < .001);
+    refs["sim/flightmodel/position/true_airspeed"].value = 0;
+    refs["sim/flightmodel/position/alpha"].value = -121;
+    refs["sim/flightmodel2/controls/elevator_trim"].value = .2;
+    for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+    assert(std::abs(observedForce.speedRatio - g940::minimumForceRatio) < .001);
+    assert(std::abs(observedForce.pitch) < .001); // no spurious ground AoA pull
     refs["sim/aircraft/view/acf_Vne"].value = 0;
     callback(0, 0, 0, nullptr);
     assert(observedForce.speedRatio == 0);
@@ -141,6 +147,9 @@ int main() {
     callback(0, 0, 0, nullptr);
     assert(deviceOpen);
     refs["sim/aircraft/view/acf_Vne"].value = 100;
+    refs["sim/flightmodel/position/true_airspeed"].value = 25.722222;
+    refs["sim/flightmodel/position/alpha"].value = 5;
+    refs["sim/flightmodel2/controls/elevator_trim"].value = .1;
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
     refs["sim/time/paused"].value = 1;
     for (int i = 0; i < 25; ++i) callback(.02f, 0, 0, nullptr);

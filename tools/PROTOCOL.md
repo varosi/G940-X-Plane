@@ -39,13 +39,14 @@ including the report ID. Each axis record has the following spring fields:
 | 24 | 2 | Velocity damping saturation, signed little endian |
 
 Equal boundaries move the spring center without a deadband. Centers range
-from -32767 to 32767. Coefficients are 64 for roll and 127 for pitch; 127 is
-the largest positive signed byte. Linux evdev
+from -32767 to 32767. Coefficients are 96 for roll and 112 for pitch. Linux evdev
 uses the equivalent values shifted left by eight bits.
-Maximum saturation is 16384 for roll and 32767 for pitch. The base airspeed
-ratio is true airspeed divided by Vne; roll saturation uses that ratio and
-pitch saturation uses 127/64 times the ratio, capped at 1.0. This increases both
-pitch stiffness and force capacity together. The first velocity damping
+Maximum saturation is 24576 for roll and 28672 for pitch. The base strength
+ratio is the greater of 0.2 and true airspeed divided by Vne, capped at 1.0,
+when airspeed is finite and nonnegative and Vne is finite and positive.
+Roll saturation uses 1.5 times the ratio; pitch uses 1.75 times the ratio,
+each capped at 1.0. Stiffness and force capacity are balanced per axis.
+The first velocity damping
 channel uses coefficient 8 and
 saturation up to 4096, also scaled by airspeed. Constant-force, autocenter,
 second spring and second damping fields remain zero. Disabling or pausing the
@@ -58,16 +59,20 @@ during the fade restores strength gradually; disabling and backend errors
 still stop immediately.
 
 The flight model derives roll center from aileron trim and pitch center from
-elevator trim and angle of attack. Stick movement does not change the spring
+elevator trim and angle of attack. Below 5 m/s the spring centers are zero,
+providing gentle mechanical resistance while stationary or taxiing. A cubic
+weight blends aerodynamic trim targets in between 5 and 15 m/s, avoiding
+spurious low-speed AoA values. Stick movement does not change the spring
 center; the device's spring supplies the restoring force locally. Center
 changes are limited to 0.5 normalized units per second for roll. Pitch uses a
 250 ms exponential filter and a lower limit of 0.25 per second, so small trim
 steps are filtered and movement tapers into the new center. Airspeed-dependent
 saturation ramps at up to 1.0 per second. A callback interval is capped at
 100 ms for these ramps so a delayed simulator frame cannot cause a large
-single-step change. Zero airspeed or invalid Vne stops the force immediately.
+single-step change. Invalid airspeed or Vne stops the force immediately;
+valid zero airspeed keeps the ground baseline until the plugin is paused.
 The Linux constant-force fallback retains stick-dependent restoring force,
-with the same smoothed trim target.
+with the same smoothed trim target, stiffness gains and per-axis force caps.
 
 Input report **1** is 21 bytes including its ID. Bit mask `0x20` in byte 20
 is set while the grip sensor is covered. With the sensor uncovered the firmware
@@ -87,7 +92,8 @@ is uncovered; this change removes the replacement hands-off centering force.
 `make probe` only opens the device and reads its LED report and grip sensor.
 `build/tools/g940_probe --led-test` briefly writes a known pattern, reads it
 back, and restores the original state. `--force-test` compares a centered spring
-at 10% saturation with zero force. `--roll-test` and `--pitch-test` compare a
+at 10% of each configured axis cap with zero force, independently of the
+flight gains and ground baseline. `--roll-test` and `--pitch-test` compare a
 constant force of 4000 with zero force on one axis; `--reverse` uses -4000.
 `--magnitude 1..16384` adjusts constant-force comparisons up to half the nominal
 range. It is accepted only with `--roll-test` or `--pitch-test`; the selected

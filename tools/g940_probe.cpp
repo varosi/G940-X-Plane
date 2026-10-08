@@ -162,9 +162,12 @@ int main(int argc, char **argv) {
         return 0;
     }
     auto report = mode == SPRING ? g940::forceReport({0.0, 0.0, 0.1}) : g940::stopReport();
-    // Keep this diagnostic's advertised 10% cap on both axes even when the
-    // flight model boosts pitch saturation relative to the airspeed ratio.
-    if (mode == SPRING) g940::put16(report.data() + 43, 0.1 * 0x7fff);
+    // Keep the advertised 10% of each configured axis cap independent of
+    // the flight model's airspeed gains and stationary baseline.
+    if (mode == SPRING) {
+        for (unsigned axis = 0; axis < 2; ++axis)
+            g940::put16(report.data() + 1 + 30 * axis + 12, 0.1 * g940::springMaximums[axis]);
+    }
     if (mode != SPRING) g940::put16(report.data() + (mode == ROLL ? 1 : 31), reverse ? -magnitude : magnitude);
     std::printf("Next: %s%s for %d seconds, then zero force for %d seconds.\n"
                 "The G940 motor power adapter must be connected.\n",

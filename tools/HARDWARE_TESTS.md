@@ -2,9 +2,10 @@
 
 Status on 2026-10-09: live pitch force and spring centering are physically
 confirmed at higher levels and in flight. The latest flight confirmed smooth
-trim and pause release; stronger force and removal of a grip-release kick
-were requested. The newest strength and idle-centering changes are awaiting
-physical validation.
+trim and pause release. The following flight requested stronger roll, slightly
+lower pitch and gentle stationary resistance. Native idle settings were read
+back as disabled during that flight and restored after exit. Grip release was
+not checked physically; the new ground/axis balance also awaits validation.
 Accepted USB writes alone are not evidence that the motors rendered an effect.
 
 The connected device reports USB ID `046d:c287` and device version `0x0142`.
@@ -173,4 +174,36 @@ on disable or normal exit. Failure while initializing triggers a restore of
 both axes. Tests cover pause retention, failure rollback, incorrect readback,
 unexpected report IDs and attempting both restores after a failure. Linux
 retains its evdev pause/close behavior and receives the same stronger pitch
-model. Physical strength and grip-release validation remain pending.
+model. The flight below checked this strength setting; grip-release validation
+remains pending.
+
+## Flight with maximum pitch stiffness and idle centering disabled
+
+The flight produced 106 force samples and shut down normally, with no backend
+errors. The 45 settled samples above 97 knots covered 99.4-139.1 knots true
+airspeed, 53.1-74.4% roll saturation and 100% pitch saturation relative to each
+axis's configured cap. No pause fade was recorded in this flight. A read-only
+check detected the grip covered during flight. Separate reads confirmed both
+idle features were zero while connected and that the original settings
+returned after shutdown: `05 14 3c 7f` and `06 1a 64 5a`. The user requested
+stronger roll, slightly lower pitch and gentle resistance when stationary.
+The user did not check grip release, so disappearance of that kick is unconfirmed.
+
+## Ground resistance and revised roll/pitch balance
+
+The next candidate raises roll coefficient 64 to 96 and its saturation ceiling
+16384 to 24576. Pitch coefficient drops from 127 to 112 and its ceiling from
+32767 to 28672, reducing stiffness and capped capacity by about 12%. Both axes
+use their coefficient divided by 64 as the airspeed saturation gain. Linux
+evdev uses equivalent coefficients and caps; its constant-force fallback now
+limits each component to the corresponding axis's airspeed-dependent cap.
+
+Valid flight data retains a minimum base strength of 0.2 even at zero airspeed.
+This is a model parameter, not a measurement of torque. Ground centering is
+neutral below 5 m/s. A cubic weight blends trim and AoA targets in between 5
+and 15 m/s, preventing the previous flight's approximately -121 degree AoA
+while nearly stationary from driving the ground spring to an extreme center.
+Invalid or negative airspeed and invalid Vne still stop immediately. The
+existing trim filtering, one-second pause release and native idle ownership
+are unchanged. Tests cover the centered baseline, target blending, invalid
+inputs and bounded Linux fallback components. Physical validation is pending.

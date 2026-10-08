@@ -16,6 +16,11 @@ The plugins are 64-bit and target X-Plane 11.20+ and X-Plane 12.
   pacman -S --needed make curl unzip mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-python
   ```
 
+Normal macOS plugin use does **not** require an administrator password or
+`sudo`. The plugins use native HID access inside X-Plane as the current user.
+The earlier direct USB diagnostic experiments required administrator access;
+they are not part of the plugin or the normal standalone HID probe.
+
 Windows force feedback uses HID interrupt output through `WriteFile`; LEDs use
 HID feature control transfers to the G940.
 Avoid running another program that writes G940 force or LED reports at the same
@@ -152,7 +157,13 @@ centering while the plugin is enabled and connected. Both original idle
 settings are backed up before either is changed, read back after writes,
 kept across pauses, and restored on disable or normal exit. This affects the
 macOS/Windows backend; Linux retains its evdev lifecycle. Physical validation
-of the latest strength and grip-release behavior is pending; see the
+of grip-release behavior is pending. The next flight requested stronger roll,
+slightly lower pitch, and gentle stationary resistance. The current candidate
+uses coefficients 96/112 for roll/pitch, raises the roll cap, lowers the pitch
+cap slightly, and keeps a 20% minimum model strength when flight data is valid.
+Ground resistance is centered, with aerodynamic trim targets blended in from
+5 to 15 m/s. The original idle settings were verified after the last exit.
+The new balance and ground feel still need a physical check; see the
 [hardware test findings](tools/HARDWARE_TESTS.md).
 
 For an optional diagnostic build, use a separate build directory so ordinary
@@ -188,8 +199,12 @@ resume. Unplug/reconnect the G940 to check the five-second retry.
   `lipo -archs build/g940FF/64/mac.xpl` to confirm the required architecture.
 - **Device access fails:** inspect the plugin's logged error. On Linux, check
   evdev/sysfs permissions and LED driver support.
-- **No forces while stationary or paused:** the model scales force by airspeed
-  relative to Vne and fades force output over about one second when paused.
+- **No forces while stationary:** keep the grip sensor covered and verify motor
+  power. Valid flight data gives a gentle centered ground spring; invalid
+  airspeed or Vne still stops output.
+- **No forces while paused:** force fades out over about one second. On the
+  native backend, hands-off centering also stays disabled until plugin disable
+  or normal exit restores the original settings.
 - **No resistance in the standalone force test:** verify motor power and hold
   the grip. Report the test output and whether the LEDs work; Windows hardware
   operation still needs validation on a Windows system.

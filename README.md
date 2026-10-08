@@ -26,9 +26,12 @@ revealed pitch-trim kicks. Keeping trim targets independent of stick motion
 and smoothing target changes produced a subsequent flight without trim kicks.
 The latest flight confirmed smooth trim and a smooth one-second pause release,
 but force was still too weak and releasing the grip caused a kick. Pitch
-stiffness has been increased again. The native backend temporarily disables
+stiffness was increased again; the next flight requested stronger roll and
+slightly lower pitch, plus gentle resistance while stationary. The current
+candidate adds centered ground resistance and rebalances both axes. The native backend temporarily disables
 hands-off centering while enabled and connected, restoring the original
-settings on disable or normal exit. These latest changes need a physical check.
+settings on disable or normal exit; restoration was read back after the latest
+flight. The new ground/axis balance and grip-release feel need a physical check.
 See the
 [hardware test findings](tools/HARDWARE_TESTS.md).
 Windows and Linux builds have been cross-compiled, but the new Windows
