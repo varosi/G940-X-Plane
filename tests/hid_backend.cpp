@@ -46,6 +46,8 @@ int main() {
     assert(outputs.back() == std::vector<uint8_t>(stop.begin(), stop.end()));
     assert(updateForceFeedback({.2, -.3, .5}));
     assert(outputs.back()[7] != 0);
+    assert(updateForceFeedback({.2, -.3, .5, 0, 0, 0}));
+    assert(outputs.back() == std::vector<uint8_t>(stop.begin(), stop.end()));
     failOutput = true;
     assert(!updateForceFeedback({.2, -.3, .5}));
     assert(connections == 0);

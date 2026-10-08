@@ -31,10 +31,27 @@ void reportError() {
 
 float flightLoopCallback(float elapsed, float, int, void *) {
     if (XPLMGetDatai(pausedRef)) {
-        if (forceReady) g940::closeForceFeedback();
-        forceReady = false;
-        forceSmoother.reset();
-        return 0.2f;
+        if (!forceReady) return 0.2f;
+#ifdef G940_DEBUG_FORCE
+        const bool startingRelease = !forceSmoother.releasing();
+#endif
+        const g940::ForceState state = forceSmoother.release(elapsed);
+        if (state.speedRatio <= 0.0 || state.effectScale <= 0.0) {
+            g940::closeForceFeedback();
+            forceReady = false;
+            forceSmoother.reset();
+#ifdef G940_DEBUG_FORCE
+            XPLMDebugString("G940 FF trace: paused force released\n");
+#endif
+            return 0.2f;
+        }
+#ifdef G940_DEBUG_FORCE
+        if (startingRelease) XPLMDebugString("G940 FF trace: one-second pause fade started\n");
+#endif
+        if (!g940::updateForceFeedback(state)) {
+            reportError(); forceReady = false; forceSmoother.reset(); return 0.2f;
+        }
+        return 0.02f;
     }
     if (!forceReady) {
         if (!g940::openForceFeedback()) { reportError(); return 5.0f; }
@@ -59,11 +76,12 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         std::snprintf(message, sizeof(message),
             "G940 FF trace: TAS=%.2f m/s Vne=%.2f kt ratio=%.3f "
             "yoke=(%.3f,%.3f) trim=(%.3f,%.3f) alpha=%.2f centers=(%.3f,%.3f) "
-            "spring=(%.3f,%.3f)\n",
+            "spring=(%.3f,%.3f) scale=%.3f\n",
             speed, vne, state.speedRatio, roll, pitch, aileronTrim, elevatorTrim,
             alpha, state.roll, state.pitch,
-            g940::springSaturationRatio(state.speedRatio, 0),
-            g940::springSaturationRatio(state.speedRatio, 1));
+            g940::springSaturationRatio(state.speedRatio, 0) * state.effectScale,
+            g940::springSaturationRatio(state.speedRatio, 1) * state.effectScale,
+            state.effectScale);
         XPLMDebugString(message);
         nextForceTrace = now + std::chrono::seconds(2);
     }

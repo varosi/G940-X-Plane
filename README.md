@@ -27,6 +27,8 @@ and smoothing target changes produced a subsequent flight without trim kicks.
 Pause release was also confirmed with the grip covered. Stronger pitch
 resistance and further smoothing are being tested. See the
 [hardware test findings](tools/HARDWARE_TESTS.md).
+The plugin now fades force out over about one second when paused; this release
+change is awaiting a flight check with the stronger pitch setting.
 Windows and Linux builds have been cross-compiled, but the new Windows
 backend still needs hardware testing on Windows. macOS/Windows support is
 G940-specific; Linux force feedback may also work with other evdev devices.

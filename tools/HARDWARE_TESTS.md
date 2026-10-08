@@ -134,3 +134,13 @@ A further grip-verified comparison kept coefficient 96 and compared 75% with
 100% pitch spring saturation. The user felt stronger resistance at 100%, but
 requested a slightly smoother release after the two-second fade. No firmware
 or idle-centering settings were changed during these spring comparisons.
+
+## One-second pause release
+
+The user selected a smooth one-second release when pausing. The plugin now
+fades spring stiffness and saturation together, including native damping,
+then sends zero force and closes the device. Resuming partway through the
+fade restores strength gradually. Disabling, backend errors, zero airspeed
+and invalid Vne retain their immediate stops. Tests cover the fade midpoint,
+zero-force completion, delayed callbacks and resume during a fade. This pause
+release and the additional pitch filter await physical flight validation.

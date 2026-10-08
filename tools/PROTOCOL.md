@@ -48,7 +48,11 @@ pitch stiffness and force capacity together. The first velocity damping
 channel uses coefficient 8 and
 saturation up to 4096, also scaled by airspeed. Constant-force, autocenter,
 second spring and second damping fields remain zero. Disabling or pausing the
-plugin sends a zeroed report with ID 2.
+plugin sends a zeroed report with ID 2. Pausing fades spring stiffness,
+saturation, and native damping together over about one second before sending
+zero and closing the force device. A cubic fade tapers both ends. Resuming
+during the fade restores strength gradually; disabling and backend errors
+still stop immediately.
 
 The flight model derives roll center from aileron trim and pitch center from
 elevator trim and angle of attack. Stick movement does not change the spring

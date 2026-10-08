@@ -137,6 +137,23 @@ int main() {
     refs["sim/time/paused"].value = 0;
     callback(0, 0, 0, nullptr);
     assert(deviceOpen);
+    refs["sim/aircraft/view/acf_Vne"].value = 100;
+    for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+    refs["sim/time/paused"].value = 1;
+    for (int i = 0; i < 25; ++i) callback(.02f, 0, 0, nullptr);
+    assert(deviceOpen && closes == 1);
+    assert(std::abs(observedForce.effectScale - .5) < .001);
+    refs["sim/time/paused"].value = 0;
+    callback(.02f, 0, 0, nullptr);
+    assert(observedForce.effectScale > .5 && observedForce.effectScale < .53);
+    refs["sim/time/paused"].value = 1;
+    for (int i = 0; i < 60; ++i) callback(.02f, 0, 0, nullptr);
+    assert(!deviceOpen && closes == 2);
+    callback(.2f, 0, 0, nullptr);
+    assert(!deviceOpen); // paused callback must not reopen after completing the fade
+    refs["sim/time/paused"].value = 0;
+    callback(.02f, 0, 0, nullptr);
+    assert(deviceOpen && observedForce.speedRatio <= .020001);
 #endif
     allowUpdate = false;
     assert(callback(0, 0, 0, nullptr) == 5.0f);

@@ -20,10 +20,12 @@ struct ForceState {
     // Devices without a native spring need the restoring force explicitly.
     double rollForce;
     double pitchForce;
+    // Scale the whole effect during a pause fade, including stiffness.
+    double effectScale;
     ForceState(double rollCenter = 0.0, double pitchCenter = 0.0, double ratio = 0.0,
-               double rollDemand = 0.0, double pitchDemand = 0.0)
+               double rollDemand = 0.0, double pitchDemand = 0.0, double scale = 1.0)
         : roll(rollCenter), pitch(pitchCenter), speedRatio(ratio),
-          rollForce(rollDemand), pitchForce(pitchDemand) {}
+          rollForce(rollDemand), pitchForce(pitchDemand), effectScale(scale) {}
 };
 
 inline double clamp(double value, double low, double high) {
@@ -71,6 +73,8 @@ inline void put16(uint8_t *target, int value) {
 
 inline std::array<uint8_t, 64> forceReport(const ForceState& state) {
     std::array<uint8_t, 64> report = {{2}};
+    const double scale = clamp(state.effectScale, 0.0, 1.0);
+    if (scale == 0.0) return report;
     const double centers[] = {state.roll, state.pitch};
     const int maximums[] = {0x4000, 0x7fff};
     for (unsigned axis = 0; axis < 2; ++axis) {
@@ -78,12 +82,12 @@ inline std::array<uint8_t, 64> forceReport(const ForceState& state) {
         const int center = clamp(centers[axis], -1.0, 1.0) * 0x7fff;
         put16(data + 6, center);
         put16(data + 8, center);
-        data[10] = data[11] = springCoefficients[axis];
-        put16(data + 12, springSaturationRatio(state.speedRatio, axis) * maximums[axis]);
+        data[10] = data[11] = springCoefficients[axis] * scale;
+        put16(data + 12, springSaturationRatio(state.speedRatio, axis) * maximums[axis] * scale);
         // The firmware's velocity channel opposes motion for positive
         // coefficients. Light damping helps settle near the trimmed center.
-        data[22] = data[23] = 8;
-        put16(data + 24, clamp(state.speedRatio, 0.0, 1.0) * 4096);
+        data[22] = data[23] = 8 * scale;
+        put16(data + 24, clamp(state.speedRatio, 0.0, 1.0) * 4096 * scale);
     }
     return report;
 }

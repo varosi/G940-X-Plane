@@ -29,6 +29,10 @@ int main() {
     const auto stop = stopReport();
     assert(stop[0] == 2);
     for (unsigned i = 1; i < stop.size(); ++i) assert(stop[i] == 0);
+    assert(forceReport({.5, -.5, 1, 0, 0, 0}) == stop);
+    const auto halfEffect = forceReport({0, 0, .5, 0, 0, .5});
+    assert(halfEffect[11] == 32 && halfEffect[41] == 48); // stiffness fades too
+    assert(halfEffect[43] == 0xff && halfEffect[44] == 0x2f); // 37.5% pitch cap
     const auto stationary = calculateForce(0, 0, 0, 100, 0, 0, 0);
     assert(stationary.speedRatio == 0);
     assert(calculateForce(0, 0, 100, 0, 0, 0, 0).speedRatio == 0);
@@ -37,6 +41,7 @@ int main() {
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const auto invalid = forceReport({nan, nan, nan});
     assert(invalid[7] == 0 && invalid[37] == 0 && invalid[13] == 0);
+    assert(forceReport({0, 0, 1, 0, 0, nan}) == stop);
 
     // Stick motion must not move the spring's trim target along with the
     // physical stick: doing so creates feedback around a moving neutral point.
@@ -80,5 +85,22 @@ int main() {
     for (int i = 0; i < 100; ++i) settled = smallTrim.update(smallTarget, .02);
     assert(std::abs(settled.pitch - smallTarget.pitch) < 1e-5);
     assert(settled.pitch <= smallTarget.pitch); // no overshoot
+
+    double lastScale = 1.0;
+    for (int i = 0; i < 25; ++i) {
+        settled = smallTrim.release(.02);
+        assert(settled.effectScale <= lastScale && settled.effectScale >= 0);
+        assert(lastScale - settled.effectScale <= .031);
+        lastScale = settled.effectScale;
+    }
+    assert(std::abs(settled.effectScale - .5) < 1e-6);
+    const auto resumed = smallTrim.update(smallTarget, .02);
+    assert(resumed.effectScale > settled.effectScale);
+    assert(resumed.effectScale - settled.effectScale <= .020001);
+    assert(!smallTrim.releasing());
+    const auto stopped = smallTrim.release(5); // expired pause after a long frame
+    assert(stopped.effectScale == 0 && forceReport(stopped) == stop);
+    smallTrim.reset();
+    assert(!smallTrim.releasing());
     std::puts("Force packets, stable trim targets, and bounded transitions passed.");
 }

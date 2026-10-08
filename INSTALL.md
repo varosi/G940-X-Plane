@@ -161,6 +161,8 @@ the force device is connected and the simulator is unpaused. The lines record
 airspeed, aircraft Vne, the calculated speed ratio, yoke inputs, trim, angle of
 attack, spring centers, and each axis's spring saturation after the strength
 adjustment. This adds logging without changing the force model.
+Diagnostic builds also log when the one-second pause fade starts and when
+force is released.
 To return to an ordinary build, install from the default `build` directory.
 
 In a loaded flight, test flap and landing-light changes, then compare stick
@@ -180,7 +182,7 @@ resume. Unplug/reconnect the G940 to check the five-second retry.
 - **Device access fails:** inspect the plugin's logged error. On Linux, check
   evdev/sysfs permissions and LED driver support.
 - **No forces while stationary or paused:** the model scales force by airspeed
-  relative to Vne and stops force output when paused.
+  relative to Vne and fades force output over about one second when paused.
 - **No resistance in the standalone force test:** verify motor power and hold
   the grip. Report the test output and whether the LEDs work; Windows hardware
   operation still needs validation on a Windows system.
