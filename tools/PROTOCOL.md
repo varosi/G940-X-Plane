@@ -51,6 +51,10 @@ validate the application's live force output.
 back, and restores the original state. `--force-test` compares a centered spring
 at 10% saturation with zero force. `--roll-test` and `--pitch-test` compare a
 constant force of 4000 with zero force on one axis; `--reverse` uses -4000.
+`--magnitude 1..16384` adjusts constant-force comparisons up to half the nominal
+range. It is accepted only with `--roll-test` or `--pitch-test`; the selected
+level is displayed before the readiness prompt. Nominal range is not a
+measurement of physical torque.
 Each stage lasts three seconds by default; `--seconds 10` extends each stage
 (1-30 seconds). Each test describes the next comparison and waits for Enter.
 Force tests then require two seconds of continuous grip-sensor coverage,
@@ -58,3 +62,6 @@ stream reports at approximately 50 Hz, and stop when the grip is released,
 input/output fails, or the process receives SIGINT/SIGTERM. Keep X-Plane closed.
 Successful USB transfers do not prove that a powered motor produces the
 intended force; that requires checking the stick physically.
+
+See [hardware test findings](HARDWARE_TESTS.md) for the macOS comparisons and
+the remaining unresolved force-output issue.

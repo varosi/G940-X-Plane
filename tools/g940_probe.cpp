@@ -15,10 +15,11 @@ enum Mode { READ, LED, SPRING, ROLL, PITCH };
 
 void usage(const char *program) {
     std::printf("Usage: %s [--led-test | --force-test | --roll-test | --pitch-test]\n"
-                "       [--seconds 1..30] [--reverse]\n"
+                "       [--seconds 1..30] [--reverse] [--magnitude 1..16384]\n"
                 "No arguments: read LED state and grip sensor only.\n"
                 "--force-test: centered spring on both axes at 10%% saturation.\n"
-                "--roll-test / --pitch-test: constant force at 4000/32767.\n"
+                "--roll-test / --pitch-test: constant force, default 4000/32767.\n"
+                "--magnitude: constant-force level, limited to half the nominal range.\n"
                 "--reverse: reverse a constant-force test.\n"
                 "Force tests include a zero-force stage of the same duration.\n", program);
 }
@@ -93,15 +94,21 @@ bool forceStage(g940::HIDDevice& device, const std::array<uint8_t, 64>& report,
 int main(int argc, char **argv) {
     Mode mode = READ;
     int seconds = 3;
+    int magnitude = 4000;
+    bool magnitudeSet = false;
     bool reverse = false;
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
         if (!std::strcmp(arg, "--help")) { usage(argv[0]); return 0; }
-        if (!std::strcmp(arg, "--seconds") && i + 1 < argc) {
+        if ((!std::strcmp(arg, "--seconds") || !std::strcmp(arg, "--magnitude")) && i + 1 < argc) {
+            const bool duration = !std::strcmp(arg, "--seconds");
             char *end = nullptr;
             const long value = std::strtol(argv[++i], &end, 10);
-            if (!*argv[i] || *end || value < 1 || value > 30) { usage(argv[0]); return 2; }
-            seconds = static_cast<int>(value);
+            if (!*argv[i] || *end || value < 1 || value > (duration ? 30 : 16384)) {
+                usage(argv[0]); return 2;
+            }
+            if (duration) seconds = static_cast<int>(value);
+            else { magnitude = static_cast<int>(value); magnitudeSet = true; }
         } else if (!std::strcmp(arg, "--reverse")) {
             reverse = true;
         } else {
@@ -115,7 +122,7 @@ int main(int argc, char **argv) {
             mode = selected;
         }
     }
-    if (reverse && mode != ROLL && mode != PITCH) { usage(argv[0]); return 2; }
+    if ((reverse || magnitudeSet) && mode != ROLL && mode != PITCH) { usage(argv[0]); return 2; }
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
     g940::HIDDevice device;
@@ -155,12 +162,15 @@ int main(int argc, char **argv) {
         return 0;
     }
     auto report = mode == SPRING ? g940::forceReport({0.0, 0.0, 0.1}) : g940::stopReport();
-    if (mode != SPRING) g940::put16(report.data() + (mode == ROLL ? 1 : 31), reverse ? -4000 : 4000);
+    if (mode != SPRING) g940::put16(report.data() + (mode == ROLL ? 1 : 31), reverse ? -magnitude : magnitude);
     std::printf("Next: %s%s for %d seconds, then zero force for %d seconds.\n"
                 "The G940 motor power adapter must be connected.\n",
                 mode == SPRING ? "centered spring at 10% saturation" :
                 mode == ROLL ? "roll-axis constant force" : "pitch-axis constant force",
                 reverse ? " (reverse direction)" : "", seconds, seconds);
+    if (mode != SPRING)
+        std::printf("Constant-force magnitude: %d/32767 (%.1f%% of nominal range).\n",
+                    magnitude, 100.0 * magnitude / 32767.0);
     if (!prepare()) return 1;
     StopForce cleanup(device);
     const auto stop = g940::stopReport();

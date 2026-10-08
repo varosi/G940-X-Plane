@@ -1,0 +1,60 @@
+# G940 macOS force-feedback investigation
+
+Status on 2026-10-09: live pitch force and spring centering are physically
+confirmed at higher levels. In-flight force levels remain under investigation.
+Accepted USB writes alone are not evidence that the motors rendered an effect.
+
+The connected device reports USB ID `046d:c287` and device version `0x0142`.
+Tests used Apple Silicon and a USB 2.0 hub, with X-Plane closed. Motor power
+was connected. Early subjective comparisons without verified grip coverage
+were inconclusive; the comparisons below monitored the grip sensor.
+
+| Comparison | Physical observation |
+| --- | --- |
+| Idle pitch centering, grip sensor uncovered: original feature 6, zero feature 6, original restored | Centering disappeared and returned |
+| Live spring and autocenter, grip sensor covered | Stick stayed free |
+| Live constant force of +4000 and -4000 on pitch; +4000 on roll | Stick stayed free |
+| Payload-only, extra ID prefix, shortened packet, and output-element API variants | Stick stayed free |
+| Original Linux driver packet with first data byte `0x51` | Stick stayed free |
+| Exclusive HID access | Stick stayed free |
+| Direct USB interrupt OUT, separately on roll and pitch | Stick stayed free; full writes completed and native driver reattached |
+| Force-state reset through feature 4, then pitch force versus zero | Brief force during reset, then stick stayed free |
+| USB and motor power disconnected, then reconnected through the same hub; native probe pitch comparison | Stick stayed free |
+| Other USB hub and different USB path; identical native probe pitch comparison | Stick stayed free |
+| Native probe pitch constant force at 16000/32767, five seconds on and five seconds zero, grip covered | Pull was felt and stopped |
+| Plugin encoder's pitch spring at 50% saturation, ten seconds on and ten seconds zero, grip covered | Centering resistance came and went |
+
+The higher-level comparisons confirm that the native macOS HID path and the
+plugin's spring packet can drive the pitch motor. The earlier low-level tests
+do not establish a transport failure. A strength threshold or weak physical
+response is a possibility; the exact threshold has not been measured.
+
+Feature reports were backed up before the idle-centering and reset comparisons.
+The original settings were restored and read back afterward:
+
+```text
+Feature 4: 04 00
+Feature 5: 05 14 3c 7f
+Feature 6: 06 1a 64 5a
+```
+
+Feature 4 bit `0x04` requests a reset of the volatile force state and clears
+itself after the reset. Features 5 and 6 each contain four transfer bytes,
+including the report ID, despite the descriptor's larger maximum feature size.
+These are investigation findings, not initialization changes in the plugin.
+
+Offline ARM emulation of the original Logitech 1.42 firmware image checked its
+interrupt-report decoder and force calculation. A full 64-byte report with ID
+2 and pitch constant force at bytes 31-32 decoded as intended. With simulated
+grip coverage, the reset delay expired, and normal motor power state, +4000 and
+-4000 produced pitch PWM magnitude 341; zero produced 0. A centered spring at
+10% pitch saturation produced magnitude 330 at simulated positions +/-10000
+and 0 at center. This checks the packet layout under those modeled conditions;
+it does not observe the physical USB bus or read the installed firmware image.
+No firmware was flashed.
+
+Changing the hub alone did not make the lower-level effect perceptible. Raising
+the constant-force magnitude did. The next step is to inspect real X-Plane
+airspeed, Vne and computed spring levels using the optional `G940_DEBUG_FORCE`
+build. No gain or force-model change has been made based on subjective bench
+results alone.

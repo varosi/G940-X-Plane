@@ -137,11 +137,25 @@ The G940 needs motor power for force feedback. Successful USB commands alone
 do not establish the force's physical direction or magnitude.
 
 Current macOS flight testing confirms LED changes for flaps and landing lights,
-but no force feedback was felt during flight. The plugin connects and its HID
-commands are accepted; physical force output still requires investigation.
-Bench testing confirmed that feature reports can disable and restore idle
-pitch centering, but live force reports produced no felt force on either axis,
-including a direct USB interrupt transfer. This remains unresolved.
+but no force feedback was felt during the initial flight. Subsequent bench tests
+confirmed live pitch constant force at 16000/32767 and pitch spring centering at
+50% saturation; both effects stopped with zero force. Lower-level comparisons
+were not felt, including direct USB transfers. In-flight force levels still need
+investigation; see the [hardware test findings](tools/HARDWARE_TESTS.md).
+
+For an optional diagnostic build, use a separate build directory so ordinary
+and diagnostic objects are not mixed:
+
+```sh
+make BUILDDIR=build/force-debug CPPFLAGS=-DG940_DEBUG_FORCE=1
+make install BUILDDIR=build/force-debug CPPFLAGS=-DG940_DEBUG_FORCE=1 XP_INSTALL_PATH="/path/to/X-Plane 12"
+```
+
+This logs `G940 FF trace:` lines in X-Plane's `Log.txt` every two seconds while
+the force device is connected and the simulator is unpaused. The lines record
+airspeed, aircraft Vne, the calculated speed ratio, yoke inputs, trim, angle of
+attack, and spring centers. This adds logging without changing the force model.
+To return to an ordinary build, install from the default `build` directory.
 
 In a loaded flight, test flap and landing-light changes, then compare stick
 resistance at low and higher airspeed. Pause the simulator and disable/re-enable

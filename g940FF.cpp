@@ -1,6 +1,9 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#ifdef G940_DEBUG_FORCE
+#include <chrono>
+#endif
 #include "XPLMPlugin.h"
 #include "XPLMDataAccess.h"
 #include "XPLMProcessing.h"
@@ -15,6 +18,9 @@ namespace {
 XPLMDataRef rollRef, pitchRef, speedRef, vneRef, alphaRef, eTrimRef, aTrimRef, pausedRef;
 bool enabled = false;
 bool forceReady = false;
+#ifdef G940_DEBUG_FORCE
+std::chrono::steady_clock::time_point nextForceTrace;
+#endif
 
 void reportError() {
     const std::string message = std::string("G940 FF: ") + g940::backendError() + "\n";
@@ -30,12 +36,30 @@ float flightLoopCallback(float, float, int, void *) {
     if (!forceReady) {
         if (!g940::openForceFeedback()) { reportError(); return 5.0f; }
         forceReady = true;
+#ifdef G940_DEBUG_FORCE
+        nextForceTrace = std::chrono::steady_clock::time_point();
+#endif
         XPLMDebugString("G940 FF: force-feedback device connected\n");
     }
+    const float roll = XPLMGetDataf(rollRef), pitch = XPLMGetDataf(pitchRef);
+    const float speed = XPLMGetDataf(speedRef), vne = XPLMGetDataf(vneRef);
+    const float alpha = XPLMGetDataf(alphaRef);
+    const float elevatorTrim = XPLMGetDataf(eTrimRef), aileronTrim = XPLMGetDataf(aTrimRef);
     const g940::ForceState state = g940::calculateForce(
-        XPLMGetDataf(rollRef), XPLMGetDataf(pitchRef),
-        XPLMGetDataf(speedRef), XPLMGetDataf(vneRef),
-        XPLMGetDataf(alphaRef), XPLMGetDataf(eTrimRef), XPLMGetDataf(aTrimRef));
+        roll, pitch, speed, vne, alpha, elevatorTrim, aileronTrim);
+#ifdef G940_DEBUG_FORCE
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= nextForceTrace) {
+        char message[384];
+        std::snprintf(message, sizeof(message),
+            "G940 FF trace: TAS=%.2f m/s Vne=%.2f kt ratio=%.3f "
+            "yoke=(%.3f,%.3f) trim=(%.3f,%.3f) alpha=%.2f centers=(%.3f,%.3f)\n",
+            speed, vne, state.speedRatio, roll, pitch, aileronTrim, elevatorTrim,
+            alpha, state.roll, state.pitch);
+        XPLMDebugString(message);
+        nextForceTrace = now + std::chrono::seconds(2);
+    }
+#endif
     if (!g940::updateForceFeedback(state)) {
         reportError(); forceReady = false; return 5.0f;
     }

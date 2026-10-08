@@ -19,8 +19,10 @@ Windows and macOS without replacing Linux's evdev and sysfs backends.
 Both plugins build on all three platforms. macOS has been tested with a connected
 G940, and both plugins loaded and connected in X-Plane 12 on Apple Silicon.
 In-flight testing confirmed that the LEDs respond to flaps and landing lights.
-No force feedback was felt during flight, so physical force output remains an
-unresolved issue despite successful HID report transfers.
+No force feedback was felt during the initial flight. Subsequent bench testing
+confirmed pitch constant force and spring centering at higher levels, with zero
+force stopping both effects. In-flight force levels still require investigation;
+see the [hardware test findings](tools/HARDWARE_TESTS.md).
 Windows and Linux builds have been cross-compiled, but the new Windows
 backend still needs hardware testing on Windows. macOS/Windows support is
 G940-specific; Linux force feedback may also work with other evdev devices.
