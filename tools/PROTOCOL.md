@@ -39,12 +39,14 @@ including the report ID. Each axis record has the following spring fields:
 | 24 | 2 | Velocity damping saturation, signed little endian |
 
 Equal boundaries move the spring center without a deadband. Centers range
-from -32767 to 32767. Coefficients are 96 for roll and 112 for pitch. Linux evdev
+from -32767 to 32767. Coefficients are 80 for roll and 112 for pitch. Linux evdev
 uses the equivalent values shifted left by eight bits.
-Maximum saturation is 24576 for roll and 28672 for pitch. The base strength
+Maximum saturation is 20480 for roll and 28672 for pitch. Native spring caps
+are rounded to the nearest 256 units to match the hands-off channel's resolution.
+The base strength
 ratio is the greater of 0.2 and true airspeed divided by Vne, capped at 1.0,
 when airspeed is finite and nonnegative and Vne is finite and positive.
-Roll saturation uses 1.5 times the ratio; pitch uses 1.75 times the ratio,
+Roll saturation uses 1.25 times the ratio; pitch uses 1.75 times the ratio,
 each capped at 1.0. Stiffness and force capacity are balanced per axis.
 The first velocity damping
 channel uses coefficient 8 and
@@ -71,23 +73,39 @@ saturation ramps at up to 1.0 per second. A callback interval is capped at
 100 ms for these ramps so a delayed simulator frame cannot cause a large
 single-step change. Invalid airspeed or Vne stops the force immediately;
 valid zero airspeed keeps the ground baseline until the plugin is paused.
+On connection or a full pause/resume, the current trim centers are established
+with zero strength before force ramps up. Model calculations use `float`,
+matching the simulator's inputs; the final native centers and forces are
+quantized to integer report fields.
 The Linux constant-force fallback retains stick-dependent restoring force,
 with the same smoothed trim target, stiffness gains and per-axis force caps.
 
 Input report **1** is 21 bytes including its ID. Bit mask `0x20` in byte 20
 is set while the grip sensor is covered. With the sensor uncovered the firmware
 uses its idle centering settings, so an apparent centering force then does not
-validate the application's live force output. The macOS/Windows plugin now
-temporarily disables that idle centering to avoid switching to a different
-neutral position when the hand is removed. It reads and backs up features
-**5** (roll) and **6** (pitch), each four bytes including its ID, before writing
-`05 00 00 00` and `06 00 00 00`. Each write is read back and checked. Pausing
-keeps the backup and disabled idle settings; disabling or normal shutdown
-restores both originals and checks them before closing the connection. If
-initialization fails after modifying an axis, both restores are attempted.
-The LED plugin does not change these settings. No firmware or saved settings
-are written. The firmware still stops live force immediately when the grip
-is uncovered; this change removes the replacement hands-off centering force.
+validate the application's live force output. The macOS/Windows plugin mirrors
+the live spring's center, coefficient, cap and damping into the hands-off
+channel so a trimmed stick retains its resting position when the grip is
+released. Features **5** (roll) and **6** (pitch) each contain four bytes:
+ID, signed coefficient, signed saturation in units of 256, signed damping.
+Feature **10** contains five bytes: ID, signed little-endian roll center,
+signed little-endian pitch center. All three are backed up before any write.
+Starting a session first zeros live and idle force. Changed centers and idle
+profiles are written and read back before the corresponding live output;
+unchanged features are cached to avoid redundant transfers.
+
+Pause fades both channels together and finally zeros both idle profiles,
+retaining the backup and connection. Disable or normal shutdown restores
+the original centers while idle force is zero, then restores both original
+profiles. All restores are attempted even after an earlier failure. The LED
+plugin does not change these settings. No firmware or saved settings are
+written. The firmware still selects the idle channel immediately when the
+grip is uncovered. Offline firmware emulation gives identical static motor
+commands for matched profiles and centers. During motion the idle channel
+caps spring and damping together, whereas the live channel caps them separately;
+the bench comparison confirmed unchanged resting position and resistance
+with no kick, while flight validation remains pending. Linux retains its
+evdev backend and driver-controlled grip behavior.
 
 `make probe` only opens the device and reads its LED report and grip sensor.
 `build/tools/g940_probe --led-test` briefly writes a known pattern, reads it

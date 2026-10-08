@@ -14,15 +14,15 @@ int main() {
     assert(force[7] == 0x01 && force[8] == 0x80); // signed roll center
     assert(force[9] == 0x01 && force[10] == 0x80);
     assert(force[37] == 0xff && force[38] == 0x7f); // pitch center
-    assert(force[13] == 0 && force[14] == 0x60); // increased roll saturation
+    assert(force[13] == 0 && force[14] == 0x50); // intermediate roll saturation
     assert(force[43] == 0 && force[44] == 0x70); // reduced pitch saturation
     const auto halfSpeed = forceReport({0, 0, .5});
-    assert(halfSpeed[13] == 0 && halfSpeed[14] == 0x48); // 75% of roll cap
+    assert(halfSpeed[13] == 0 && halfSpeed[14] == 0x32); // 62.5% of roll cap
     assert(halfSpeed[43] == 0 && halfSpeed[44] == 0x62); // 87.5% of pitch cap
     assert(springSaturationRatio(.9, 1) == 1); // strength never exceeds the device limit
     for (unsigned axis = 0; axis < 2; ++axis) {
-        assert(force[1 + 30 * axis + 10] == (axis == 0 ? 96 : 112));
-        assert(force[1 + 30 * axis + 11] == (axis == 0 ? 96 : 112));
+        assert(force[1 + 30 * axis + 10] == (axis == 0 ? 80 : 112));
+        assert(force[1 + 30 * axis + 11] == (axis == 0 ? 80 : 112));
         assert(force[1 + 30 * axis + 22] > 0);
         assert(force[1 + 30 * axis + 23] > 0);
     }
@@ -31,7 +31,7 @@ int main() {
     for (unsigned i = 1; i < stop.size(); ++i) assert(stop[i] == 0);
     assert(forceReport({.5, -.5, 1, 0, 0, 0}) == stop);
     const auto halfEffect = forceReport({0, 0, .5, 0, 0, .5});
-    assert(halfEffect[11] == 48 && halfEffect[41] == 56); // stiffness fades too
+    assert(halfEffect[11] == 40 && halfEffect[41] == 56); // stiffness fades too
     assert(halfEffect[43] == 0 && halfEffect[44] == 0x31); // half of pitch cap at half speed
     const auto stationary = calculateForce(0, 0, 0, 100, 0, 0, 0);
     assert(stationary.speedRatio == minimumForceRatio);
@@ -39,15 +39,15 @@ int main() {
     assert(taxi.speedRatio == minimumForceRatio && taxi.roll == 0 && taxi.pitch == 0);
     assert(taxi.rollForce < 0 && taxi.pitchForce > 0); // mechanical restoring force
     const auto taxiReport = forceReport(taxi);
-    assert(taxiReport[13] != 0 && taxiReport[43] != 0);
+    assert(taxiReport[14] != 0 && taxiReport[44] != 0);
     const auto blended = calculateForce(0, 0, 10, 187, 5, .2, .1);
     assert(std::abs(blended.roll - .15) < 1e-6);
     assert(std::abs(blended.pitch - .075) < 1e-6);
     assert(calculateForce(0, 0, 100, 0, 0, 0, 0).speedRatio == 0);
     assert(calculateForce(0, 0, -100, 100, 0, 0, 0).speedRatio == 0);
     assert(calculateForce(0, 0, 1000, 100, 0, 0, 0).speedRatio == 1);
-    const double nan = std::numeric_limits<double>::quiet_NaN();
-    const double infinity = std::numeric_limits<double>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float infinity = std::numeric_limits<float>::infinity();
     assert(calculateForce(0, 0, nan, 100, 0, 0, 0).speedRatio == 0);
     assert(calculateForce(0, 0, infinity, 100, 0, 0, 0).speedRatio == 0);
     assert(calculateForce(0, 0, 10, infinity, 0, 0, 0).speedRatio == 0);
@@ -56,13 +56,28 @@ int main() {
     assert(forceReport({0, 0, 1, 0, 0, nan}) == stop);
 
     const auto cappedConstant = constantForceComponents({0, 0, 1, 10, -10});
-    assert(std::abs(cappedConstant[0] - 24576.0 / 32767) < 1e-6);
+    assert(std::abs(cappedConstant[0] - 20480.0 / 32767) < 1e-6);
     assert(std::abs(cappedConstant[1] + 28672.0 / 32767) < 1e-6);
     const auto smallConstant = constantForceComponents({0, 0, .5, .1, .1});
-    assert(std::abs(smallConstant[0] - .075) < 1e-6);
+    assert(std::abs(smallConstant[0] - .0625) < 1e-6);
     assert(std::abs(smallConstant[1] - .0875) < 1e-6);
     const auto invalidConstant = constantForceComponents({0, 0, nan, infinity, nan});
     assert(invalidConstant[0] == 0 && invalidConstant[1] == 0);
+
+    assert((idleCenterReport(force) == std::array<uint8_t, 5>{{10, 1, 128, 255, 127}}));
+    assert((idleForceReport(force, 0) == std::array<uint8_t, 4>{{5, 80, 80, 8}}));
+    assert((idleForceReport(force, 1) == std::array<uint8_t, 4>{{6, 112, 112, 8}}));
+    for (int i = 0; i <= 100; ++i) {
+        const auto sample = forceReport({.1, -.3, i / 100.0f, 0, 0, .6});
+        for (unsigned axis = 0; axis < 2; ++axis) {
+            const auto idle = idleForceReport(sample, axis);
+            const unsigned start = 1 + 30 * axis;
+            assert(sample[start + 12] == 0); // same /256 cap in both grip modes
+            assert(idle[1] == sample[start + 10] && idle[2] == sample[start + 13]);
+            assert(idle[3] == sample[start + 22]);
+            assert(idle[2] < 128); // positive signed firmware saturation
+        }
+    }
 
     // Stick motion must not move the spring's trim target along with the
     // physical stick: doing so creates feedback around a moving neutral point.
@@ -95,6 +110,11 @@ int main() {
     smoother.reset();
     const auto restarted = smoother.update(trimTarget, .02);
     assert(restarted.pitch <= .005001 && restarted.speedRatio <= .020001);
+    smoother.reset(trimTarget);
+    const auto primed = smoother.update(trimTarget, .02f);
+    assert(primed.pitch == trimTarget.pitch && primed.roll == trimTarget.roll);
+    assert(primed.speedRatio <= .020001f && primed.effectScale <= .020001f);
+    assert(std::abs(primed.pitchForce - trimTarget.pitchForce) < 1e-6f);
 
     // Small trim steps must be filtered as well as large changes: the old
     // slew limiter applied a small step in one frame.

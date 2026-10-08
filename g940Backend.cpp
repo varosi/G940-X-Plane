@@ -72,12 +72,16 @@ std::array<uint8_t, 3> originalLEDs = {{3, 0, 0}};
 bool haveOriginalLEDs = false;
 std::array<std::array<uint8_t, 4>, 2> originalIdle = {{{{5, 0, 0, 0}}, {{6, 0, 0, 0}}}};
 bool haveOriginalIdle = false;
+std::array<uint8_t, 5> originalCenters = {{10, 0, 0, 0, 0}};
+std::array<std::array<uint8_t, 4>, 2> previousIdle = {{{{5, 0, 0, 0}}, {{6, 0, 0, 0}}}};
+std::array<uint8_t, 5> previousCenters = {{10, 0, 0, 0, 0}};
 
-bool writeIdleSettings(const std::array<uint8_t, 4>& settings) {
+template<size_t Size>
+bool writeIdleSettings(const std::array<uint8_t, Size>& settings) {
     if (!forceDevice.setFeature(settings.data(), settings.size())) {
         lastError = forceDevice.error(); return false;
     }
-    std::array<uint8_t, 4> verified = {{settings[0], 0, 0, 0}};
+    std::array<uint8_t, Size> verified = {{settings[0]}};
     if (!forceDevice.getFeature(verified.data(), verified.size())) {
         lastError = forceDevice.error(); return false;
     }
@@ -85,6 +89,14 @@ bool writeIdleSettings(const std::array<uint8_t, 4>& settings) {
         lastError = "G940 idle-centering settings did not read back correctly";
         return false;
     }
+    return true;
+}
+template<size_t Size>
+bool updateIdleSettings(const std::array<uint8_t, Size>& settings,
+                        std::array<uint8_t, Size>& previous) {
+    if (settings == previous) return true;
+    if (!writeIdleSettings(settings)) return false;
+    previous = settings;
     return true;
 }
 #endif
@@ -111,6 +123,14 @@ bool prepareForceFeedback() {
             forceDevice.close(); return false;
         }
     }
+    originalCenters[0] = 10;
+    if (!forceDevice.getFeature(originalCenters.data(), originalCenters.size())) {
+        lastError = forceDevice.error(); forceDevice.close(); return false;
+    }
+    if (originalCenters[0] != 10) {
+        lastError = "Unexpected G940 hands-off center feature report ID";
+        forceDevice.close(); return false;
+    }
     haveOriginalIdle = true;
     const auto report = stopReport();
     if (!forceDevice.setOutput(report.data(), report.size())) {
@@ -123,7 +143,9 @@ bool prepareForceFeedback() {
             const std::string error = lastError;
             closeForceFeedback(); lastError = error; return false;
         }
+        previousIdle[settings[0] - 5] = disabled;
     }
+    previousCenters = originalCenters;
     return true;
 #endif
 }
@@ -149,22 +171,22 @@ bool openForceFeedback() {
 bool updateForceFeedback(const ForceState& state) {
 #if LIN
     if (forceFD < 0) return false;
-    const double scale = clamp(state.effectScale, 0.0, 1.0);
+    const float scale = clamp(state.effectScale, 0.0f, 1.0f);
     if (haveSpring) {
-        const double centers[] = {state.roll, state.pitch};
+        const float centers[] = {state.roll, state.pitch};
         for (unsigned axis = 0; axis < 2; ++axis) {
             auto& condition = effect.u.condition[axis];
-            condition.center = clamp(centers[axis], -1.0, 1.0) * 0x7fff;
+            condition.center = clamp(centers[axis], -1.0f, 1.0f) * 0x7fff;
             condition.left_coeff = condition.right_coeff = (springCoefficients[axis] << 8) * scale;
             condition.left_saturation = condition.right_saturation =
                 springSaturationRatio(state.speedRatio, axis) * (2 * springMaximums[axis]) * scale;
         }
     } else {
         const auto components = constantForceComponents(state);
-        const double roll = components[0], pitch = components[1];
-        effect.u.constant.level = clamp(std::hypot(roll, pitch), 0.0, 1.0) * 0x7fff * scale;
-        const double angle = std::atan2(-roll, pitch);
-        const int direction = angle * 32768.0 / std::acos(-1.0);
+        const float roll = components[0], pitch = components[1];
+        effect.u.constant.level = clamp(std::hypot(roll, pitch), 0.0f, 1.0f) * 0x7fff * scale;
+        const float angle = std::atan2(-roll, pitch);
+        const int direction = angle * 32768.0f / std::acos(-1.0f);
         effect.direction = static_cast<uint16_t>(direction);
     }
     if (ioctl(forceFD, EVIOCSFF, &effect) >= 0) return true;
@@ -173,9 +195,23 @@ bool updateForceFeedback(const ForceState& state) {
     closeForceFeedback();
     lastError = updateError;
 #else
-    const auto report = state.speedRatio > 0.0 ? forceReport(state) : stopReport();
-    if (forceDevice.setOutput(report.data(), report.size())) return true;
-    const std::string updateError = forceDevice.error();
+    bool success;
+    if (state.speedRatio <= 0.0f || !std::isfinite(state.speedRatio) ||
+        clamp(state.effectScale, 0.0f, 1.0f) == 0.0f) {
+        success = releaseForceFeedback();
+    } else {
+        const auto report = forceReport(state);
+        // Update the idle center first: when starting, its force is still zero.
+        // Cache unchanged features to avoid unnecessary control transfers.
+        success = updateIdleSettings(idleCenterReport(report), previousCenters);
+        for (unsigned axis = 0; axis < previousIdle.size() && success; ++axis)
+            success = updateIdleSettings(idleForceReport(report, axis), previousIdle[axis]);
+        if (success && !forceDevice.setOutput(report.data(), report.size())) {
+            lastError = forceDevice.error(); success = false;
+        }
+    }
+    if (success) return true;
+    const std::string updateError = lastError;
     closeForceFeedback();
     lastError = updateError;
 #endif
@@ -196,13 +232,20 @@ bool releaseForceFeedback() {
     forceFD = -1;
     return success;
 #else
+    bool success = true;
     if (forceDevice.isOpen()) {
         const auto report = stopReport();
         if (!forceDevice.setOutput(report.data(), report.size())) {
-            lastError = forceDevice.error(); return false;
+            lastError = forceDevice.error(); success = false;
+        }
+        // Pause/error stops must remove hands-off force as well as live force.
+        for (unsigned axis = 0; axis < previousIdle.size(); ++axis) {
+            const std::array<uint8_t, 4> disabled = {{static_cast<uint8_t>(5 + axis), 0, 0, 0}};
+            if (!writeIdleSettings(disabled)) success = false;
+            else previousIdle[axis] = disabled;
         }
     }
-    return true;
+    return success;
 #endif
 }
 
@@ -210,6 +253,8 @@ bool closeForceFeedback() {
     bool success = releaseForceFeedback();
 #if !LIN
     if (forceDevice.isOpen() && haveOriginalIdle) {
+        // Restore the original neutral positions while idle force is zero.
+        if (!writeIdleSettings(originalCenters)) success = false;
         // Always attempt both restores, even if stopping or the first restore failed.
         for (const auto& settings : originalIdle) {
             if (!writeIdleSettings(settings)) success = false;

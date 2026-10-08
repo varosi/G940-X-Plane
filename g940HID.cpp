@@ -98,7 +98,7 @@ bool HIDDevice::open() {
             const NTSTATUS result = HidP_GetCaps(parsed, &caps);
             HidD_FreePreparsedData(parsed);
             if (result == HIDP_STATUS_SUCCESS && caps.OutputReportByteLength >= 64 &&
-                caps.FeatureReportByteLength >= 3) {
+                caps.FeatureReportByteLength >= 5) {
                 CloseHandle(device);
                 device = CreateFileW(detail->DevicePath, GENERIC_WRITE,
                     FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,

@@ -1,11 +1,12 @@
 # G940 macOS force-feedback investigation
 
 Status on 2026-10-09: live pitch force and spring centering are physically
-confirmed at higher levels and in flight. The latest flight confirmed smooth
-trim and pause release. The following flight requested stronger roll, slightly
-lower pitch and gentle stationary resistance. Native idle settings were read
-back as disabled during that flight and restored after exit. Grip release was
-not checked physically; the new ground/axis balance also awaits validation.
+confirmed at higher levels and in flight. Trim and pause release are smooth.
+The latest flight found the increased roll too strong and requested trim-only
+hands-off control. A subsequent bench comparison with matched live and idle
+trim centers confirmed the same resting position and resistance with no kick
+on grip release. Original idle profiles and centers were independently verified
+afterward. Hands-off flight and the reduced roll strength await a flight check.
 Accepted USB writes alone are not evidence that the motors rendered an effect.
 
 The connected device reports USB ID `046d:c287` and device version `0x0142`.
@@ -205,5 +206,58 @@ and 15 m/s, preventing the previous flight's approximately -121 degree AoA
 while nearly stationary from driving the ground spring to an extreme center.
 Invalid or negative airspeed and invalid Vne still stop immediately. The
 existing trim filtering, one-second pause release and native idle ownership
-are unchanged. Tests cover the centered baseline, target blending, invalid
-inputs and bounded Linux fallback components. Physical validation is pending.
+were unchanged. Tests covered the centered baseline, target blending, invalid
+inputs and bounded Linux fallback components.
+
+The subsequent flight produced 134 force samples, including 34 below 5 m/s,
+and one completed pause fade. No force-backend errors were logged and X-Plane
+shut down normally. The user reported that roll was too strong and requested
+trim-only hands-off flight without an abrupt change when releasing the grip.
+The stationary resistance was not specifically assessed in that feedback.
+
+## Matched hands-on and hands-off trim centers
+
+The current candidate reduces roll coefficient 96 to 80 and its maximum cap
+24576 to 20480, about 17% lower in both cases. Pitch remains 112/28672. The
+ground baseline, trim filter and one-second pause fade are retained. Force
+model and backend arithmetic use `float`, matching the simulator inputs;
+protocol fields have much coarser integer resolution.
+
+A read-only query found feature **10**, five bytes including its ID, at
+`0a 00 00 00 00`. Offline analysis of the official 1.42 firmware image identifies
+its two signed little-endian values as the hands-off roll and pitch centers.
+The idle profiles in features 5 and 6 contain a coefficient, a saturation in
+units of 256 and a damping coefficient. Offline force-loop emulation with
+pitch coefficient 112, cap 28672 and zero velocity produced identical motor
+commands in the two grip states for centers -8000, 0 and 8000 and positions
+-16000, -8000, 0, 8000 and 16000. This is modeled controller output, not a
+physical torque measurement.
+
+Instead of disabling idle centering, the native backend now mirrors the
+smoothed live spring center and profile into these features. Native live
+spring caps are rounded to the nearest 256 units to match idle resolution.
+Idle profiles and centers are backed up before writes; changed features are
+read back and checked. A new connection or full pause/resume establishes the
+current trim center at zero strength before raising force. Pausing fades both
+channels to zero. Normal close restores the original centers while idle force
+is zero, then both original profiles. Mock tests exercise matching packets,
+cached updates, pause retention, nonzero original centers, incorrect report
+IDs, rollback after a partially applied center write, and restoration attempts
+after failures.
+
+The firmware caps idle spring and damping together, while live spring and
+damping have separate caps. Static matching therefore does not establish
+perfect equality during rapid movement at saturation. Linux retains
+its driver-controlled grip behavior; no simulator control overrides or
+firmware changes are introduced.
+
+The native-backend grip comparison used a 4% pitch-center offset, base ratio
+0.4, roll cap 10240/32767 and pitch cap 19968/32767. Force ramped in over two
+seconds; the sensor was covered for the ten-second live stage and uncovered
+for the ten-second idle stage. The user confirmed the same resting position
+and resistance, with no kick on grip release. The center then returned over
+three seconds and force faded over one second. All feature writes read back
+correctly. Independent reads after closing verified the original profiles
+`05 14 3c 7f`, `06 1a 64 5a` and original centers `0a 00 00 00 00`.
+Flight validation of trim-only hands-off control and the revised roll strength
+remains pending.

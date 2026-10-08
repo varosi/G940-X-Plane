@@ -9,50 +9,59 @@ public:
     void reset() {
         state_ = ForceState();
         releasing_ = false;
-        releaseElapsed_ = 0.0;
+        releaseElapsed_ = 0.0f;
+    }
+    void reset(const ForceState& target) {
+        reset();
+        // Establish the current trim position while force is zero, rather
+        // than pulling toward an artificial zero center after connecting.
+        state_ = target;
+        state_.speedRatio = 0.0f;
+        state_.effectScale = 0.0f;
     }
     bool releasing() const { return releasing_; }
-    ForceState update(const ForceState& target, double elapsed) {
+    ForceState update(const ForceState& target, float elapsed) {
         // A long simulator frame must not turn a trim change into one jump.
-        const double dt = clamp(elapsed, 0.0, 0.1);
+        const float dt = clamp(elapsed, 0.0f, 0.1f);
         releasing_ = false;
         // Resuming partway through a release must not jump to full strength.
-        state_.effectScale = approach(state_.effectScale, 1.0, dt);
-        state_.roll = approach(state_.roll, clamp(target.roll, -1.0, 1.0), 0.5 * dt);
+        state_.effectScale = approach(state_.effectScale, 1.0f, dt);
+        state_.roll = approach(state_.roll, clamp(target.roll, -1.0f, 1.0f), 0.5f * dt);
         // Filter small trim/AoA changes too, and taper into the new center.
         // The lower slew rate also offsets the stronger pitch spring.
-        const double pitchTarget = clamp(target.pitch, -1.0, 1.0);
-        const double filteredPitch = state_.pitch +
-            (pitchTarget - state_.pitch) * (-std::expm1(-dt / 0.25));
-        state_.pitch = approach(state_.pitch, filteredPitch, 0.25 * dt);
-        const double ratio = clamp(target.speedRatio, 0.0, 1.0);
-        state_.speedRatio = ratio == 0.0 ? 0.0 : approach(state_.speedRatio, ratio, dt);
+        const float pitchTarget = clamp(target.pitch, -1.0f, 1.0f);
+        const float filteredPitch = state_.pitch +
+            (pitchTarget - state_.pitch) * (-std::expm1(-dt / 0.25f));
+        state_.pitch = approach(state_.pitch, filteredPitch, 0.25f * dt);
+        const float ratio = clamp(target.speedRatio, 0.0f, 1.0f);
+        state_.speedRatio = ratio == 0.0f ? 0.0f : approach(state_.speedRatio, ratio, dt);
         // Keep immediate stick-dependent restoring force on the Linux
         // constant-force fallback, using the same smoothed trim centers.
         state_.rollForce = target.rollForce + state_.roll - target.roll;
         state_.pitchForce = target.pitchForce + state_.pitch - target.pitch;
         return state_;
     }
-    ForceState release(double elapsed) {
+    ForceState release(float elapsed) {
         if (!releasing_) {
             releasing_ = true;
-            releaseElapsed_ = 0.0;
+            releaseElapsed_ = 0.0f;
             releaseStartScale_ = state_.effectScale;
         }
         // Honor the one-second release even after a delayed callback.
-        releaseElapsed_ = clamp(releaseElapsed_ + clamp(elapsed, 0.0, 1.0), 0.0, 1.0);
-        const double t = releaseElapsed_;
-        state_.effectScale = releaseStartScale_ * (1.0 - t * t * (3.0 - 2.0 * t));
+        releaseElapsed_ = clamp(releaseElapsed_ + clamp(elapsed, 0.0f, 1.0f), 0.0f, 1.0f);
+        if (releaseElapsed_ > 1.0f - 1e-6f) releaseElapsed_ = 1.0f;
+        const float t = releaseElapsed_;
+        state_.effectScale = releaseStartScale_ * (1.0f - t * t * (3.0f - 2.0f * t));
         return state_;
     }
 private:
-    static double approach(double current, double target, double step) {
+    static float approach(float current, float target, float step) {
         return current + clamp(target - current, -step, step);
     }
     ForceState state_;
     bool releasing_ = false;
-    double releaseElapsed_ = 0.0;
-    double releaseStartScale_ = 1.0;
+    float releaseElapsed_ = 0.0f;
+    float releaseStartScale_ = 1.0f;
 };
 }
 #endif

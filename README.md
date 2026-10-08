@@ -24,15 +24,15 @@ confirmed pitch constant force and spring centering at higher levels, with zero
 force stopping both effects. A subsequent flight confirmed force feedback but
 revealed pitch-trim kicks. Keeping trim targets independent of stick motion
 and smoothing target changes produced a subsequent flight without trim kicks.
-The latest flight confirmed smooth trim and a smooth one-second pause release,
-but force was still too weak and releasing the grip caused a kick. Pitch
-stiffness was increased again; the next flight requested stronger roll and
-slightly lower pitch, plus gentle resistance while stationary. The current
-candidate adds centered ground resistance and rebalances both axes. The native backend temporarily disables
-hands-off centering while enabled and connected, restoring the original
-settings on disable or normal exit; restoration was read back after the latest
-flight. The new ground/axis balance and grip-release feel need a physical check.
-See the
+Flight testing confirmed smooth trim and a smooth one-second pause release.
+The latest roll increase felt too strong. The current candidate reduces roll
+strength, retains gentle centered ground resistance, and mirrors the trimmed
+spring into native hands-off centering. This should retain the stick's resting
+position when the grip sensor is uncovered, allowing trim-only hands-off flight
+without switching to an unrelated center. Original idle profiles and centers
+are restored on disable or normal exit. A bench comparison confirmed unchanged
+resting position and resistance with no grip-release kick. Trim-only hands-off
+flight and the revised roll balance still need a flight check; see the
 [hardware test findings](tools/HARDWARE_TESTS.md).
 Windows and Linux builds have been cross-compiled, but the new Windows
 backend still needs hardware testing on Windows. macOS/Windows support is

@@ -39,7 +39,7 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         const bool startingRelease = !forceSmoother.releasing();
 #endif
         const g940::ForceState state = forceSmoother.release(elapsed);
-        if (state.speedRatio <= 0.0 || state.effectScale <= 0.0) {
+        if (state.speedRatio <= 0.0f || state.effectScale <= 0.0f) {
             if (!g940::releaseForceFeedback()) {
                 reportError(); g940::closeForceFeedback();
             }
@@ -58,7 +58,8 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         }
         return 0.02f;
     }
-    if (!forceReady) {
+    const bool startingForce = !forceReady;
+    if (startingForce) {
         if (!g940::openForceFeedback()) { reportError(); return 5.0f; }
         forceReady = true;
         forceSmoother.reset();
@@ -73,6 +74,7 @@ float flightLoopCallback(float elapsed, float, int, void *) {
     const float elevatorTrim = XPLMGetDataf(eTrimRef), aileronTrim = XPLMGetDataf(aTrimRef);
     const g940::ForceState target = g940::calculateForce(
         roll, pitch, speed, vne, alpha, elevatorTrim, aileronTrim);
+    if (startingForce) forceSmoother.reset(target);
     const g940::ForceState state = forceSmoother.update(target, elapsed);
 #ifdef G940_DEBUG_FORCE
     const auto now = std::chrono::steady_clock::now();

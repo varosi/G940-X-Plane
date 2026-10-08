@@ -151,19 +151,24 @@ the trim target from stick motion, limits target changes, and adds light native
 G940 damping. A subsequent flight confirmed smoother trim without kicks and
 force release when paused with the grip covered. The next flight confirmed
 smooth trim and a smooth one-second pause release, but requested more force
-and reported a kick when uncovering the grip. The latest candidate uses
-pitch coefficient 127, the highest positive value, and disables native idle
-centering while the plugin is enabled and connected. Both original idle
-settings are backed up before either is changed, read back after writes,
-kept across pauses, and restored on disable or normal exit. This affects the
-macOS/Windows backend; Linux retains its evdev lifecycle. Physical validation
-of grip-release behavior is pending. The next flight requested stronger roll,
-slightly lower pitch, and gentle stationary resistance. The current candidate
-uses coefficients 96/112 for roll/pitch, raises the roll cap, lowers the pitch
-cap slightly, and keeps a 20% minimum model strength when flight data is valid.
-Ground resistance is centered, with aerodynamic trim targets blended in from
-5 to 15 m/s. The original idle settings were verified after the last exit.
-The new balance and ground feel still need a physical check; see the
+and reported a kick when uncovering the grip. A subsequent candidate disabled
+native idle centering and increased pitch; the following flight requested
+stronger roll, slightly lower pitch, and gentle stationary resistance. That
+roll increase felt too strong. The current candidate uses coefficients 80/112
+and caps 20480/28672 for roll/pitch, with a 20% minimum model strength when
+flight data is valid. Ground resistance is centered, with aerodynamic trim
+targets blended in from 5 to 15 m/s.
+
+To support trim-only hands-off flight, the native backend now mirrors the live
+spring into idle centering, including the trim center. It backs up both idle
+profiles and both idle centers before writing; each changed feature is read
+back and checked. Pause fades both grip modes to zero, keeping the backup;
+disable or normal exit restores the original profiles and centers. This
+affects macOS/Windows; Linux retains its evdev lifecycle. The previous idle
+profiles were verified after the last exit. A bench comparison confirmed the
+same resting position and resistance with no kick when uncovering the grip.
+All original profiles and centers were independently verified afterward.
+Trim-only hands-off flight and revised roll strength need a flight check; see the
 [hardware test findings](tools/HARDWARE_TESTS.md).
 
 For an optional diagnostic build, use a separate build directory so ordinary
@@ -202,9 +207,9 @@ resume. Unplug/reconnect the G940 to check the five-second retry.
 - **No forces while stationary:** keep the grip sensor covered and verify motor
   power. Valid flight data gives a gentle centered ground spring; invalid
   airspeed or Vne still stops output.
-- **No forces while paused:** force fades out over about one second. On the
-  native backend, hands-off centering also stays disabled until plugin disable
-  or normal exit restores the original settings.
+- **No forces while paused:** force fades out over about one second in both
+  grip modes on the native backend. Force returns gradually on resume;
+  plugin disable or normal exit restores the original idle settings.
 - **No resistance in the standalone force test:** verify motor power and hold
   the grip. Report the test output and whether the LEDs work; Windows hardware
   operation still needs validation on a Windows system.

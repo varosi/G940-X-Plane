@@ -21,7 +21,7 @@ PLUGIN_API void XPluginStop();
 
 namespace {
 enum Type { DATA_INTEGER, DATA_FLOAT, DATA_INTEGERS, DATA_FLOATS };
-struct Ref { Type type; double value; };
+struct Ref { Type type; float value; };
 std::map<std::string, Ref> refs;
 XPLMFlightLoop_f callback = nullptr;
 int registrations = 0, unregistrations = 0;
@@ -165,8 +165,15 @@ int main() {
     callback(.2f, 0, 0, nullptr);
     assert(opens == opensBeforePausedCallback); // paused callback must not restart live effects
     refs["sim/time/paused"].value = 0;
+    refs["sim/flightmodel2/controls/elevator_trim"].value = .3f;
+    refs["sim/flightmodel2/controls/aileron_trim"].value = -.1f;
     callback(.02f, 0, 0, nullptr);
     assert(deviceOpen && observedForce.speedRatio <= .020001);
+    // Resume establishes the current trim center before raising the force,
+    // so neither grip mode briefly pulls toward a stale neutral position.
+    assert(std::abs(observedForce.pitch - .3f) < .00001f);
+    assert(std::abs(observedForce.roll + .3f) < .00001f);
+    assert(observedForce.effectScale <= .020001f);
 #endif
     allowUpdate = false;
     assert(callback(0, 0, 0, nullptr) == 5.0f);
