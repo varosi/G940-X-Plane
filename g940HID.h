@@ -1,32 +1,34 @@
 #ifndef G940_HID_H
 #define G940_HID_H
-#include <cstddef>
+#include <array>
 #include <cstdint>
+#include <span>
 #include <string>
 
 namespace g940 {
 // Owns a non-exclusive connection so X-Plane can continue reading controls.
 class HIDDevice {
+    enum class Report { Input, Output, Feature };
 public:
-    HIDDevice();
+    HIDDevice() = default;
     ~HIDDevice();
     bool open();
     void close();
     bool isOpen() const { return handle_ != nullptr; }
-    bool setFeature(const uint8_t *report, size_t length);
-    bool getFeature(uint8_t *report, size_t length);
-    bool setOutput(const uint8_t *report, size_t length);
+    bool setFeature(std::span<const uint8_t> report) { return setReport(Report::Feature, report); }
+    bool getFeature(std::span<uint8_t> report) { return getReport(Report::Feature, report); }
+    bool setOutput(std::span<const uint8_t> report) { return setReport(Report::Output, report); }
     bool readGrip(bool& covered);
     const std::string& error() const { return error_; }
 private:
     HIDDevice(const HIDDevice&) = delete;
     HIDDevice& operator=(const HIDDevice&) = delete;
-    void *handle_;
+    bool setReport(Report type, std::span<const uint8_t> report);
+    bool getReport(Report type, std::span<uint8_t> report);
+    void *handle_ = nullptr;
 #if IBM
-    size_t featureLength_;
-    size_t outputLength_;
-    size_t inputLength_;
-    void *writeEvent_;
+    std::array<std::size_t, 3> reportLengths_ = {};
+    void *writeEvent_ = nullptr;
 #endif
     std::string error_;
 };

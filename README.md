@@ -1,82 +1,130 @@
 # G940-X-Plane
 
-Two X-Plane plugins for Logitech Flight System G940:
+Two X-Plane 11.20+/12 plugins for Logitech Flight System G940: **g940FF**
+provides airspeed-dependent force feedback with trim and angle-of-attack spring
+centers; **g940LEDs** displays aircraft state on the eight throttle button LEDs.
 
-- **g940FF** adds airspeed-dependent force feedback, with pitch/roll trim and
-  angle of attack influencing the spring center. The force model remains a
-  work in progress.
-- **g940LEDs** maps aircraft state to the eight throttle button LEDs.
-
-The original implementation supported Linux. Native G940 HID backends now add
-Windows and macOS without replacing Linux's evdev and sysfs backends.
-
-| Platform | Architecture | Force feedback | Throttle LEDs |
+| Platform | Architecture | Force feedback | LEDs |
 | --- | --- | --- | --- |
-| Linux | x86-64 | Linux evdev; spring or constant-force fallback | G940 sysfs LED driver |
-| Windows | x86-64 | G940 vendor HID output reports | G940 HID feature reports |
-| macOS 11+ | Intel and Apple Silicon, universal binary | G940 vendor HID output reports | G940 HID feature reports |
+| Linux | x86-64 | evdev spring or constant-force fallback | G940 sysfs driver |
+| Windows | x86-64 | Native G940 HID | Native G940 HID |
+| macOS 11+ | Intel/Apple Silicon universal | Native G940 HID | Native G940 HID |
 
-Both plugins build on all three platforms. macOS has been tested with a connected
-G940, and both plugins loaded and connected in X-Plane 12 on Apple Silicon.
-In-flight testing confirmed that the LEDs respond to flaps and landing lights.
-No force feedback was felt during the initial flight. Subsequent bench testing
-confirmed pitch constant force and spring centering at higher levels, with zero
-force stopping both effects. A subsequent flight confirmed force feedback but
-revealed pitch-trim kicks. Keeping trim targets independent of stick motion
-and smoothing target changes produced a subsequent flight without trim kicks.
-Flight testing confirmed smooth trim and a smooth one-second pause release.
-The latest roll increase felt too strong. The current candidate reduces roll
-strength, retains gentle centered ground resistance, and mirrors the trimmed
-spring into native hands-off centering. This should retain the stick's resting
-position when the grip sensor is uncovered, allowing trim-only hands-off flight
-without switching to an unrelated center. Original idle profiles and centers
-are restored on disable or normal exit. A bench comparison confirmed unchanged
-resting position and resistance with no grip-release kick. Trim-only hands-off
-flight and the revised roll balance still need a flight check; see the
-[hardware test findings](tools/HARDWARE_TESTS.md).
-Windows and Linux builds have been cross-compiled, but the new Windows
-backend still needs hardware testing on Windows. macOS/Windows support is
-G940-specific; Linux force feedback may also work with other evdev devices.
+Both plugins build on all three platforms. macOS hardware and X-Plane 12 flight
+operation are confirmed; Windows/Linux hardware validation remains pending.
+Trim changes and the one-second pause release are smooth. Matched hands-off
+centering holds the trimmed stick position; the latest flight still reported
+some early grip-release kicks near center, disappearing later. The force model
+remains a work in progress. See [hardware findings](tools/HARDWARE_TESTS.md)
+and the [report protocol](tools/PROTOCOL.md).
 
-Linux LEDs require the original author's
-[G940 kernel patches](https://github.com/chrisboyle/G940-linux) or equivalent
-driver support, plus write permission to the LED brightness files. Force feedback
-requires read/write permission to the joystick's `/dev/input/event*` device.
+## Build
 
-## Build and install
+Use GNU make, a C++20 compiler with `std::span`, curl, unzip and Python 3.8+.
+On macOS install Xcode Command Line Tools (`xcode-select --install`); Linux
+needs GCC/G++ and the Linux input headers. On Windows use the MSYS2 **UCRT64**
+shell and install:
 
 ```sh
-make
+pacman -S --needed make curl unzip mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-python
+```
+
+```sh
+make -j2
 make test
-make install XP_INSTALL_PATH="/path/to/X-Plane 12"
+```
+
+The Makefile detects the host; `PLATFORM=mac|linux|windows` selects an explicit
+target. The SDK calls its platform macros `APL` (macOS), `IBM` (Windows) and
+`LIN` (Linux); the Makefile sets the selected macro to 1 and the others to 0.
+`IBM` is a historical Windows platform name, not a CPU architecture selection.
+Cross builds also require an appropriate compiler, for example:
+
+```sh
+make PLATFORM=linux CXX="zig c++ -target x86_64-linux-gnu.2.31" LDFLAGS=
+make PLATFORM=windows CXX="zig c++ -target x86_64-windows-gnu" LDFLAGS=
 ```
 
 The build downloads the [official X-Plane SDK](https://developer.x-plane.com/sdk/plugin-sdk-downloads/)
-if it is missing. It retains the XPLM 3.0.1 API target for X-Plane 11.20+ and
-X-Plane 12. No locally implemented XPLM stubs are linked into the plugins.
+4.3.0 if missing, retaining the XPLM 3.0.1 API target. Use `SDK_DIR=/path/to/SDK`
+or symlink `SDK` to an existing official SDK. macOS links the universal XPLM
+framework, Windows its import library; Linux resolves SDK symbols in X-Plane.
+No handwritten SDK replacements or XPLM stubs are linked.
 
-The output is `build/g940FF/64/` and `build/g940LEDs/64/`, with
-`lin.xpl`, `win.xpl`, or `mac.xpl` for the selected platform. Platform objects
-are stored separately, so building another OS does not overwrite an existing
-OS's plugin. Each build creates both plugins.
+Outputs are `build/{g940FF,g940LEDs}/64/{mac,win,lin}.xpl`; objects are separated
+by OS and architecture. `MAC_ARCHS=arm64` or `MAC_ARCHS=x86_64` selects one Mac
+architecture; plain `make` restores universal output. Run `make clean` when
+changing compilers, SDK paths or flags. Clean preserves `build/previous-sdk-stubs`.
 
-See [INSTALL.md](INSTALL.md) for prerequisites, Windows setup, SDK overrides,
-installation hints, and hardware testing.
+## Install
 
-## LED mapping
+Close X-Plane, then run:
 
-Map buttons P1-P8 to these X-Plane actions to match their indicator colours:
+```sh
+make install XP_INSTALL_PATH="/path/to/X-Plane 12"
+```
 
-| P1 | P2 | P3 | P4 |
-| --- | --- | --- | --- |
-| Speedbrakes: retract one | Flaps: retract one | Carb heat: toggle | Autopilot: servos toggle |
-| **P5** | **P6** | **P7** | **P8** |
-| Speedbrakes: extend one | Flaps: extend one | Landing light: toggle | Landing gear: toggle |
+Windows paths such as `C:/X-Plane 12` work from UCRT64. Both plugins are copied
+to `Resources/plugins/<plugin>/64/`, backing up existing binaries and retaining
+other platforms' binaries. Without an explicit path the installer searches
+X-Plane 12 hints, then 11 hints, skips stale paths and accepts multiple lines:
 
-Red indicates the low/off state, green the high/on state, and amber an
-intermediate position. Indicators for absent aircraft equipment are off.
-The mapping is currently fixed in `g940LEDs.cpp`.
+| Platform | Primary hint directory |
+| --- | --- |
+| macOS | `~/Library/Preferences/` |
+| Linux | `~/.x-plane/` |
+| Windows | `%LOCALAPPDATA%/` |
 
-The plugins stop their flight loops and release hardware when disabled. Force
-output also stops when the simulator pauses. Missing/disconnected hardware is
-retried every five seconds and reported in X-Plane's `Log.txt`.
+Hint filenames are `x-plane_install_12.txt` and `x-plane_install_11.txt`; home
+folder hints are also accepted. Use `XP_INSTALL_PATH` for multiple valid
+installations or `HINTFILE=/path/to/hint.txt` for a custom hint. Load a flight
+and check `Log.txt` for both loaded plugins and `G940 FF: force-feedback device
+connected` / `G940 LEDs: LED device connected`. Device failures retry after
+five seconds. Disable/re-enable through Plugin Admin to check cleanup.
+
+Normal macOS use and the native HID probe require **no administrator password**.
+Avoid another application writing G940 reports concurrently. Linux force
+feedback needs read/write access to `/dev/input/event*`; LEDs need the original
+[G940 kernel patches](https://github.com/chrisboyle/G940-linux) or equivalent
+`/sys/class/leds/g940:*` driver support and write permission.
+
+## Test and diagnose
+
+`make test` checks packet encoding, trim filtering, invalid inputs, pause fades,
+dataref types, lifecycle/reconnection, native backup/rollback/restoration and
+installation without moving hardware. Assertions stay enabled with release
+flags. CI runs these checks on all three OSes.
+For optional force traces every two seconds, use a separate build directory:
+
+```sh
+make BUILDDIR=build/force-debug CPPFLAGS=-DG940_DEBUG_FORCE=1
+make install BUILDDIR=build/force-debug CPPFLAGS=-DG940_DEBUG_FORCE=1 XP_INSTALL_PATH="/path/to/X-Plane 12"
+```
+
+Traces include airspeed/Vne, yoke inputs, trim, AoA, centers, saturation and
+pause scale. Installing the ordinary `build` output removes diagnostic logging.
+
+With X-Plane closed, `make probe` on macOS/Windows only reads hardware. Optional
+comparisons warn and wait for Enter; force stages start after two seconds of
+grip coverage and stop on release. Motor power must be connected:
+
+```sh
+build/tools/g940_probe --led-test --seconds 10
+build/tools/g940_probe --force-test --seconds 10
+build/tools/g940_probe --pitch-test --seconds 5 --magnitude 16000
+build/tools/g940_probe --pitch-test --reverse --seconds 10
+```
+
+`--roll-test` selects sideways constant force. Duration is 1–30 seconds;
+constant magnitude is 1–16384 (default 4000). `--force-test` uses a centered
+spring at 10% of each axis cap, independent of flight gains. Both include an
+equal-duration zero-force stage. Low-level forces may be imperceptible; USB
+success alone does not prove physical effect. LEDs display red/green/amber/off
+and restore their original state. Never test forces without a preparation warning.
+
+The fixed LED mapping is P1/P5 speed brakes, P2/P6 flaps, P3 carburetor heat,
+P4 autopilot, P7 landing lights, P8 gear; absent equipment shows off. Force is
+centered gently on the ground, ramps with airspeed, fades on pause in both
+native grip modes and restores original idle settings on normal disable/exit.
+Invalid airspeed or Vne stops immediately. For load/access failures inspect
+`Log.txt`; `lipo -archs build/g940FF/64/mac.xpl` checks Mac architectures.

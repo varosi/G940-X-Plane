@@ -16,19 +16,15 @@ constexpr unsigned springMaximums[2] = {0x5000, 0x7000};
 constexpr float minimumForceRatio = 0.2f;
 struct ForceState {
     // Spring centers are independent of the measured stick position.
-    float roll;
-    float pitch;
+    float roll = 0.0f;
+    float pitch = 0.0f;
     // Airspeed strength with a ground baseline; zero means invalid flight data.
-    float speedRatio;
+    float speedRatio = 0.0f;
     // Devices without a native spring need the restoring force explicitly.
-    float rollForce;
-    float pitchForce;
+    float rollForce = 0.0f;
+    float pitchForce = 0.0f;
     // Scale the whole effect during a pause fade, including stiffness.
-    float effectScale;
-    ForceState(float rollCenter = 0.0f, float pitchCenter = 0.0f, float ratio = 0.0f,
-               float rollDemand = 0.0f, float pitchDemand = 0.0f, float scale = 1.0f)
-        : roll(rollCenter), pitch(pitchCenter), speedRatio(ratio),
-          rollForce(rollDemand), pitchForce(pitchDemand), effectScale(scale) {}
+    float effectScale = 1.0f;
 };
 
 inline float clamp(float value, float low, float high) {

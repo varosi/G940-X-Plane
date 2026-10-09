@@ -17,7 +17,7 @@ SDK_URL := https://developer.x-plane.com/wp-content/plugins/code-sample-generati
 SDK_HEADER := $(SDK_DIR)/CHeaders/XPLM/XPLMDefs.h
 SDK_CPPFLAGS := -I"$(SDK_DIR)/CHeaders/XPLM" -DXPLM200=1 -DXPLM210=1 -DXPLM300=1 -DXPLM301=1
 CXXFLAGS ?= -O2 -g
-CXXFLAGS += -std=c++11 -Wall -Wextra -Wpedantic -fvisibility=hidden
+CXXFLAGS += -std=c++20 -Wall -Wextra -Wpedantic -fvisibility=hidden
 empty :=
 space := $(empty) $(empty)
 
@@ -102,6 +102,7 @@ FORCE:
 install: all
 	python3 tools/install.py --build-dir "$(BUILDDIR)" --platform "$(PLATFORM)" $(if $(XP_INSTALL_PATH),--x-plane "$(XP_INSTALL_PATH)") $(if $(HINTFILE),--hint-file "$(HINTFILE)")
 
+test: override CXXFLAGS += -UNDEBUG
 test: $(SDK_HEADER)
 	mkdir -p "$(BUILDDIR)/tests"
 	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(CXXFLAGS) $(ARCH_FLAGS) tests/protocol.cpp -I. -o "$(BUILDDIR)/tests/protocol"

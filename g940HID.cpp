@@ -28,11 +28,6 @@ std::string deviceError(const char *operation, unsigned code) {
 #endif
 }
 
-HIDDevice::HIDDevice() : handle_(nullptr)
-#if IBM
-    , featureLength_(0), outputLength_(0), inputLength_(0), writeEvent_(nullptr)
-#endif
-{}
 HIDDevice::~HIDDevice() { close(); }
 
 bool HIDDevice::open() {
@@ -111,9 +106,8 @@ bool HIDDevice::open() {
                 if (event) {
                     handle_ = device;
                     writeEvent_ = event;
-                    featureLength_ = caps.FeatureReportByteLength;
-                    outputLength_ = caps.OutputReportByteLength;
-                    inputLength_ = caps.InputReportByteLength;
+                    reportLengths_ = {caps.InputReportByteLength, caps.OutputReportByteLength,
+                                      caps.FeatureReportByteLength};
                     break;
                 }
                 error_ = deviceError("Create output event", GetLastError());
@@ -143,62 +137,28 @@ void HIDDevice::close() {
     handle_ = nullptr;
 }
 
-bool HIDDevice::setFeature(const uint8_t *report, size_t length) {
-    if (!isOpen() || !length) { error_ = "HID device is not open"; return false; }
+bool HIDDevice::setReport(Report type, std::span<const uint8_t> report) {
+    if (!isOpen() || report.empty()) { error_ = "HID device is not open"; return false; }
+    const char *operation = type == Report::Feature ? "Set feature report" : "Set output report";
 #if APL
-    IOReturn result = IOHIDDeviceSetReport(static_cast<IOHIDDeviceRef>(handle_),
-        kIOHIDReportTypeFeature, report[0], report, length);
+    const auto kind = type == Report::Feature ? kIOHIDReportTypeFeature : kIOHIDReportTypeOutput;
+    const IOReturn result = IOHIDDeviceSetReport(static_cast<IOHIDDeviceRef>(handle_),
+        kind, report[0], report.data(), report.size());
     if (result == kIOReturnSuccess) return true;
-    error_ = deviceError("Set feature report", result);
+    error_ = deviceError(operation, result);
 #elif IBM
-    if (length > featureLength_) { error_ = "Feature report is too large"; return false; }
-    std::vector<uint8_t> padded(featureLength_, 0);
-    std::copy(report, report + length, padded.begin());
-    if (HidD_SetFeature(static_cast<HANDLE>(handle_), padded.data(), padded.size())) return true;
-    error_ = deviceError("Set feature report", GetLastError());
-#else
-    (void)report;
-#endif
-    return false;
-}
-
-bool HIDDevice::getFeature(uint8_t *report, size_t length) {
-    if (!isOpen() || !length) { error_ = "HID device is not open"; return false; }
-#if APL
-    CFIndex actual = length;
-    IOReturn result = IOHIDDeviceGetReport(static_cast<IOHIDDeviceRef>(handle_),
-        kIOHIDReportTypeFeature, report[0], report, &actual);
-    if (result == kIOReturnSuccess && actual == static_cast<CFIndex>(length)) return true;
-    error_ = result == kIOReturnSuccess ? "Incomplete feature report" : deviceError("Get feature report", result);
-#elif IBM
-    if (length > featureLength_) { error_ = "Feature report is too large"; return false; }
-    std::vector<uint8_t> padded(featureLength_, 0);
-    padded[0] = report[0];
-    if (HidD_GetFeature(static_cast<HANDLE>(handle_), padded.data(), padded.size())) {
-        std::copy(padded.begin(), padded.begin() + length, report);
-        return true;
-    }
-    error_ = deviceError("Get feature report", GetLastError());
-#else
-    (void)report;
-#endif
-    return false;
-}
-
-bool HIDDevice::setOutput(const uint8_t *report, size_t length) {
-    if (!isOpen() || !length) { error_ = "HID device is not open"; return false; }
-#if APL
-    IOReturn result = IOHIDDeviceSetReport(static_cast<IOHIDDeviceRef>(handle_),
-        kIOHIDReportTypeOutput, report[0], report, length);
-    if (result == kIOReturnSuccess) return true;
-    error_ = deviceError("Set output report", result);
-#elif IBM
-    if (length > outputLength_) { error_ = "Output report is too large"; return false; }
-    std::vector<uint8_t> padded(outputLength_, 0);
-    std::copy(report, report + length, padded.begin());
-    // Firmware 1.42 rejects SET_REPORT(Output, 2) on the control endpoint.
-    // WriteFile delivers the report through the USB interrupt OUT endpoint.
+    const size_t length = reportLengths_[static_cast<unsigned>(type)];
+    if (report.size() > length) { error_ = "HID report is too large"; return false; }
+    std::vector<uint8_t> padded(length, 0);
+    std::copy(report.begin(), report.end(), padded.begin());
     HANDLE device = static_cast<HANDLE>(handle_);
+    if (type == Report::Feature) {
+        if (HidD_SetFeature(device, padded.data(), padded.size())) return true;
+        error_ = deviceError(operation, GetLastError());
+        return false;
+    }
+    // Firmware 1.42 needs interrupt OUT. Keep the buffer/OVERLAPPED alive
+    // until completion, including cancellation after the 100 ms timeout.
     OVERLAPPED write = {};
     write.hEvent = static_cast<HANDLE>(writeEvent_);
     ResetEvent(write.hEvent);
@@ -210,7 +170,6 @@ bool HIDDevice::setOutput(const uint8_t *report, size_t length) {
         if (wait != WAIT_OBJECT_0) {
             const DWORD code = wait == WAIT_TIMEOUT ? ERROR_TIMEOUT : GetLastError();
             CancelIoEx(device, &write);
-            // Keep the buffer and OVERLAPPED alive until cancellation completes.
             GetOverlappedResult(device, &write, &written, TRUE);
             error_ = deviceError("Wait for output report", code);
             return false;
@@ -218,46 +177,46 @@ bool HIDDevice::setOutput(const uint8_t *report, size_t length) {
         result = GetOverlappedResult(device, &write, &written, FALSE);
     }
     if (result && written == padded.size()) return true;
-    error_ = result ? "Incomplete output report" : deviceError("Write output report", GetLastError());
+    error_ = result ? "Incomplete output report" : deviceError(operation, GetLastError());
 #else
-    (void)report;
+    error_ = std::string(operation) + " requires the native macOS or Windows backend";
+#endif
+    return false;
+}
+
+bool HIDDevice::getReport(Report type, std::span<uint8_t> report) {
+    if (!isOpen() || report.empty()) { error_ = "HID device is not open"; return false; }
+    const char *operation = type == Report::Feature ? "Get feature report" : "Read grip sensor";
+#if APL
+    const auto kind = type == Report::Feature ? kIOHIDReportTypeFeature : kIOHIDReportTypeInput;
+    CFIndex actual = report.size();
+    const IOReturn result = IOHIDDeviceGetReport(static_cast<IOHIDDeviceRef>(handle_),
+        kind, report[0], report.data(), &actual);
+    if (result == kIOReturnSuccess && actual == static_cast<CFIndex>(report.size())) return true;
+    error_ = result == kIOReturnSuccess ? "Incomplete HID report" : deviceError(operation, result);
+#elif IBM
+    const size_t length = reportLengths_[static_cast<unsigned>(type)];
+    if (report.size() > length) { error_ = "HID report is too large"; return false; }
+    std::vector<uint8_t> padded(length, 0);
+    padded[0] = report[0];
+    HANDLE device = static_cast<HANDLE>(handle_);
+    const bool success = type == Report::Feature
+        ? HidD_GetFeature(device, padded.data(), padded.size())
+        : HidD_GetInputReport(device, padded.data(), padded.size());
+    if (success) { std::copy_n(padded.begin(), report.size(), report.begin()); return true; }
+    error_ = deviceError(operation, GetLastError());
+#else
+    error_ = std::string(operation) + " requires the native macOS or Windows backend";
 #endif
     return false;
 }
 
 bool HIDDevice::readGrip(bool& covered) {
-    if (!isOpen()) { error_ = "HID device is not open"; return false; }
-#if APL
-    std::array<uint8_t, 21> report = {{1}};
-    CFIndex actual = report.size();
-    const IOReturn result = IOHIDDeviceGetReport(static_cast<IOHIDDeviceRef>(handle_),
-        kIOHIDReportTypeInput, 1, report.data(), &actual);
-    if (result != kIOReturnSuccess) {
-        error_ = deviceError("Read grip sensor", result);
-        return false;
-    }
-    if (actual != static_cast<CFIndex>(report.size()) || report[0] != 1) {
-        error_ = "Incomplete grip sensor report";
-        return false;
-    }
-#elif IBM
-    if (inputLength_ < 21) { error_ = "Grip sensor report unavailable"; return false; }
-    std::vector<uint8_t> report(inputLength_, 0);
-    report[0] = 1;
-    if (!HidD_GetInputReport(static_cast<HANDLE>(handle_), report.data(), report.size())) {
-        error_ = deviceError("Read grip sensor", GetLastError());
-        return false;
-    }
+    std::array<uint8_t, 21> report = {1};
+    if (!getReport(Report::Input, report)) return false;
     if (report[0] != 1) { error_ = "Invalid grip sensor report"; return false; }
-#else
-    (void)covered;
-    error_ = "Grip sensor diagnostics require the native macOS or Windows backend";
-    return false;
-#endif
-#if APL || IBM
     // Report 1 has 20 payload bytes. Its vendor-defined grip bit is 157.
     covered = (report[20] & 0x20) != 0;
     return true;
-#endif
 }
 }

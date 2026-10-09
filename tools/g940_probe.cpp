@@ -38,7 +38,7 @@ public:
     ~StopForce() { if (!stopped_) stop(); }
     bool stop() {
         const auto report = g940::stopReport();
-        stopped_ = device_.setOutput(report.data(), report.size());
+        stopped_ = device_.setOutput(report);
         if (!stopped_) std::fprintf(stderr, "Stop force failed: %s\n", device_.error().c_str());
         return stopped_;
     }
@@ -82,7 +82,7 @@ bool forceStage(g940::HIDDevice& device, const std::array<uint8_t, 64>& report,
         if (!covered) {
             std::fprintf(stderr, "Grip released: comparison stopped.\n"); return false;
         }
-        if (!device.setOutput(report.data(), report.size())) {
+        if (!device.setOutput(report)) {
             std::fprintf(stderr, "%s\n", device.error().c_str()); return false;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -129,7 +129,7 @@ int main(int argc, char **argv) {
     if (!device.open()) { std::fprintf(stderr, "%s\n", device.error().c_str()); return 1; }
     std::puts("Connected to Logitech G940 (046d:c287), without exclusive access.");
     std::array<uint8_t, 3> original = {{3}};
-    if (!device.getFeature(original.data(), original.size())) {
+    if (!device.getFeature(original)) {
         std::fprintf(stderr, "%s\n", device.error().c_str()); return 1;
     }
     std::printf("LED report: ID=%02x red=%02x green=%02x\n", original[0], original[1], original[2]);
@@ -145,15 +145,15 @@ int main(int argc, char **argv) {
         const g940::LEDState colours = {{g940::RED, g940::GREEN, g940::AMBER, g940::OFF,
                                         g940::RED, g940::GREEN, g940::AMBER, g940::OFF}};
         const auto report = g940::ledReport(colours);
-        const bool applied = device.setFeature(report.data(), report.size());
+        const bool applied = device.setFeature(report);
         if (applied) {
             const auto end = Clock::now() + std::chrono::seconds(seconds);
             while (!interrupted && Clock::now() < end)
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
         std::array<uint8_t, 3> observed = {{3}};
-        const bool readBack = applied && device.getFeature(observed.data(), observed.size());
-        const bool restored = device.setFeature(original.data(), original.size());
+        const bool readBack = applied && device.getFeature(observed);
+        const bool restored = device.setFeature(original);
         if (!readBack || observed != report || !restored || interrupted) {
             std::fprintf(stderr, "LED comparison/restore failed or interrupted: %s\n", device.error().c_str());
             return 1;
@@ -180,7 +180,7 @@ int main(int argc, char **argv) {
     if (!prepare()) return 1;
     StopForce cleanup(device);
     const auto stop = g940::stopReport();
-    if (!device.setOutput(stop.data(), stop.size()) || !waitForGrip(device)) return 1;
+    if (!device.setOutput(stop) || !waitForGrip(device)) return 1;
     const bool completed = forceStage(device, report, "FORCE ON", seconds) &&
                            forceStage(device, stop, "FORCE OFF", seconds);
     const bool stopped = cleanup.stop();

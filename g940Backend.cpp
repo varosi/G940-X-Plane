@@ -70,35 +70,34 @@ HIDDevice forceDevice;
 HIDDevice ledDevice;
 std::array<uint8_t, 3> originalLEDs = {{3, 0, 0}};
 bool haveOriginalLEDs = false;
-std::array<std::array<uint8_t, 4>, 2> originalIdle = {{{{5, 0, 0, 0}}, {{6, 0, 0, 0}}}};
+// Own a feature's original value and last verified write. Keep the backup
+// across pauses and restore it even after a partially applied transfer.
+template<size_t Size>
+struct SavedFeature {
+    const uint8_t id;
+    std::array<uint8_t, Size> original, current;
+    SavedFeature(uint8_t id) : id(id), original{id}, current{id} {}
+    bool backup() {
+        original[0] = id;
+        if (!forceDevice.getFeature(original)) { lastError = forceDevice.error(); return false; }
+        if (original[0] != id) { lastError = "Unexpected G940 idle feature report ID"; return false; }
+        current = original;
+        return true;
+    }
+    bool write(const std::array<uint8_t, Size>& value) {
+        std::array<uint8_t, Size> verified = {id};
+        if (!forceDevice.setFeature(value) || !forceDevice.getFeature(verified)) {
+            lastError = forceDevice.error(); return false;
+        }
+        if (verified != value) { lastError = "G940 idle settings did not read back correctly"; return false; }
+        current = value;
+        return true;
+    }
+    bool update(const std::array<uint8_t, Size>& value) { return value == current || write(value); }
+};
+std::array<SavedFeature<4>, 2> idleSettings = {{{5}, {6}}};
+SavedFeature<5> idleCenters{10};
 bool haveOriginalIdle = false;
-std::array<uint8_t, 5> originalCenters = {{10, 0, 0, 0, 0}};
-std::array<std::array<uint8_t, 4>, 2> previousIdle = {{{{5, 0, 0, 0}}, {{6, 0, 0, 0}}}};
-std::array<uint8_t, 5> previousCenters = {{10, 0, 0, 0, 0}};
-
-template<size_t Size>
-bool writeIdleSettings(const std::array<uint8_t, Size>& settings) {
-    if (!forceDevice.setFeature(settings.data(), settings.size())) {
-        lastError = forceDevice.error(); return false;
-    }
-    std::array<uint8_t, Size> verified = {{settings[0]}};
-    if (!forceDevice.getFeature(verified.data(), verified.size())) {
-        lastError = forceDevice.error(); return false;
-    }
-    if (verified != settings) {
-        lastError = "G940 idle-centering settings did not read back correctly";
-        return false;
-    }
-    return true;
-}
-template<size_t Size>
-bool updateIdleSettings(const std::array<uint8_t, Size>& settings,
-                        std::array<uint8_t, Size>& previous) {
-    if (settings == previous) return true;
-    if (!writeIdleSettings(settings)) return false;
-    previous = settings;
-    return true;
-}
 #endif
 }
 
@@ -110,42 +109,16 @@ bool prepareForceFeedback() {
 #else
     if (forceDevice.isOpen()) return true;
     if (!forceDevice.open()) { lastError = forceDevice.error(); return false; }
-    // Read both axes before changing either. Keep the backup across pauses;
-    // otherwise resume would save the temporarily disabled settings as original.
-    for (unsigned axis = 0; axis < originalIdle.size(); ++axis) {
-        auto& settings = originalIdle[axis];
-        settings[0] = 5 + axis;
-        if (!forceDevice.getFeature(settings.data(), settings.size())) {
-            lastError = forceDevice.error(); forceDevice.close(); return false;
-        }
-        if (settings[0] != 5 + axis) {
-            lastError = "Unexpected G940 idle-centering feature report ID";
-            forceDevice.close(); return false;
-        }
+    // Back up every feature before modifying any of them.
+    for (auto& feature : idleSettings) {
+        if (!feature.backup()) { forceDevice.close(); return false; }
     }
-    originalCenters[0] = 10;
-    if (!forceDevice.getFeature(originalCenters.data(), originalCenters.size())) {
-        lastError = forceDevice.error(); forceDevice.close(); return false;
-    }
-    if (originalCenters[0] != 10) {
-        lastError = "Unexpected G940 hands-off center feature report ID";
-        forceDevice.close(); return false;
-    }
+    if (!idleCenters.backup()) { forceDevice.close(); return false; }
     haveOriginalIdle = true;
-    const auto report = stopReport();
-    if (!forceDevice.setOutput(report.data(), report.size())) {
-        const std::string error = forceDevice.error();
+    if (!releaseForceFeedback()) {
+        const std::string error = lastError;
         closeForceFeedback(); lastError = error; return false;
     }
-    for (const auto& settings : originalIdle) {
-        const std::array<uint8_t, 4> disabled = {{settings[0], 0, 0, 0}};
-        if (!writeIdleSettings(disabled)) {
-            const std::string error = lastError;
-            closeForceFeedback(); lastError = error; return false;
-        }
-        previousIdle[settings[0] - 5] = disabled;
-    }
-    previousCenters = originalCenters;
     return true;
 #endif
 }
@@ -203,10 +176,10 @@ bool updateForceFeedback(const ForceState& state) {
         const auto report = forceReport(state);
         // Update the idle center first: when starting, its force is still zero.
         // Cache unchanged features to avoid unnecessary control transfers.
-        success = updateIdleSettings(idleCenterReport(report), previousCenters);
-        for (unsigned axis = 0; axis < previousIdle.size() && success; ++axis)
-            success = updateIdleSettings(idleForceReport(report, axis), previousIdle[axis]);
-        if (success && !forceDevice.setOutput(report.data(), report.size())) {
+        success = idleCenters.update(idleCenterReport(report));
+        for (unsigned axis = 0; axis < idleSettings.size() && success; ++axis)
+            success = idleSettings[axis].update(idleForceReport(report, axis));
+        if (success && !forceDevice.setOutput(report)) {
             lastError = forceDevice.error(); success = false;
         }
     }
@@ -235,14 +208,12 @@ bool releaseForceFeedback() {
     bool success = true;
     if (forceDevice.isOpen()) {
         const auto report = stopReport();
-        if (!forceDevice.setOutput(report.data(), report.size())) {
+        if (!forceDevice.setOutput(report)) {
             lastError = forceDevice.error(); success = false;
         }
         // Pause/error stops must remove hands-off force as well as live force.
-        for (unsigned axis = 0; axis < previousIdle.size(); ++axis) {
-            const std::array<uint8_t, 4> disabled = {{static_cast<uint8_t>(5 + axis), 0, 0, 0}};
-            if (!writeIdleSettings(disabled)) success = false;
-            else previousIdle[axis] = disabled;
+        for (auto& feature : idleSettings) {
+            if (!feature.write({feature.id, 0, 0, 0})) success = false;
         }
     }
     return success;
@@ -254,10 +225,10 @@ bool closeForceFeedback() {
 #if !LIN
     if (forceDevice.isOpen() && haveOriginalIdle) {
         // Restore the original neutral positions while idle force is zero.
-        if (!writeIdleSettings(originalCenters)) success = false;
+        if (!idleCenters.write(idleCenters.original)) success = false;
         // Always attempt both restores, even if stopping or the first restore failed.
-        for (const auto& settings : originalIdle) {
-            if (!writeIdleSettings(settings)) success = false;
+        for (auto& feature : idleSettings) {
+            if (!feature.write(feature.original)) success = false;
         }
     }
     forceDevice.close();
@@ -276,7 +247,7 @@ bool openLEDs() {
 #else
     if (!ledDevice.open()) { lastError = ledDevice.error(); return false; }
     originalLEDs = {{3, 0, 0}};
-    haveOriginalLEDs = ledDevice.getFeature(originalLEDs.data(), originalLEDs.size());
+    haveOriginalLEDs = ledDevice.getFeature(originalLEDs);
     if (!haveOriginalLEDs) {
         lastError = ledDevice.error(); ledDevice.close(); return false;
     }
@@ -300,7 +271,7 @@ bool updateLEDs(const LEDState& state) {
     // Refresh even unchanged colours: a write detects a removed HID device
     // and repopulates the LEDs after a reconnect. The callback runs at 5 Hz.
     const auto report = ledReport(state);
-    if (!ledDevice.setFeature(report.data(), report.size())) {
+    if (!ledDevice.setFeature(report)) {
         lastError = ledDevice.error();
         ledDevice.close(); ledsOpen = false; haveLEDState = false; return false;
     }
@@ -317,7 +288,7 @@ void closeLEDs() {
     green.fill(GREEN);
     updateLEDs(green);
 #else
-    if (haveOriginalLEDs && !ledDevice.setFeature(originalLEDs.data(), originalLEDs.size()))
+    if (haveOriginalLEDs && !ledDevice.setFeature(originalLEDs))
         lastError = ledDevice.error();
     ledDevice.close();
     haveOriginalLEDs = false;

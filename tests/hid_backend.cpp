@@ -17,30 +17,27 @@ auto centers = originalCenters;
 }
 
 namespace g940 {
-HIDDevice::HIDDevice() : handle_(nullptr)
-#if IBM
-    , featureLength_(0), outputLength_(0), inputLength_(0), writeEvent_(nullptr)
-#endif
-{}
 HIDDevice::~HIDDevice() { close(); }
 bool HIDDevice::open() {
     if (!isOpen()) { handle_ = this; ++connections; }
     return true;
 }
 void HIDDevice::close() { if (isOpen()) --connections; handle_ = nullptr; }
-bool HIDDevice::getFeature(uint8_t *report, size_t length) {
+bool HIDDevice::getReport(Report type, std::span<uint8_t> report) {
+    assert(type == Report::Feature);
+    const size_t length = report.size();
     assert(isOpen());
     if (failRead) { error_ = "simulated feature read failure"; return false; }
     if (report[0] == 3) {
         assert(length == 3); report[1] = 0; report[2] = 0xff;
     } else if (report[0] == 10) {
         assert(length == 5);
-        std::copy(centers.begin(), centers.end(), report);
+        std::copy(centers.begin(), centers.end(), report.begin());
         if (corruptFeatureID == 10) { report[0] = 4; corruptFeatureID = 0; }
     } else {
         assert(length == 4 && (report[0] == 5 || report[0] == 6));
         const int id = report[0];
-        std::copy(idle[id - 5].begin(), idle[id - 5].end(), report);
+        std::copy(idle[id - 5].begin(), idle[id - 5].end(), report.begin());
         if (id == mismatchFeatureID && report[1] == 0) {
             report[1] = 1; mismatchFeatureID = 0;
         }
@@ -48,26 +45,29 @@ bool HIDDevice::getFeature(uint8_t *report, size_t length) {
     }
     return true;
 }
-bool HIDDevice::setFeature(const uint8_t *report, size_t length) {
-    assert(isOpen()); features.emplace_back(report, report + length);
+bool HIDDevice::setReport(Report type, std::span<const uint8_t> report) {
+    assert(isOpen());
+    if (type == Report::Output) {
+        outputs.emplace_back(report.begin(), report.end());
+        if (failOutput) { failOutput = false; error_ = "simulated output failure"; return false; }
+        return true;
+    }
+    assert(type == Report::Feature);
+    const size_t length = report.size();
+    features.emplace_back(report.begin(), report.end());
     if (report[0] == 5 || report[0] == 6) {
         assert(length == 4);
-        std::copy(report, report + length, idle[report[0] - 5].begin());
+        std::copy(report.begin(), report.end(), idle[report[0] - 5].begin());
         // A failed transfer can leave the device modified; rollback must cover both axes.
         if (report[0] == failFeatureID) {
             failFeatureID = 0; error_ = "simulated feature write failure"; return false;
         }
     } else if (report[0] == 10) {
-        assert(length == 5); std::copy(report, report + length, centers.begin());
+        assert(length == 5); std::copy(report.begin(), report.end(), centers.begin());
         if (failFeatureID == 10) {
             failFeatureID = 0; error_ = "simulated feature write failure"; return false;
         }
     } else assert(report[0] == 3 && length == 3);
-    return true;
-}
-bool HIDDevice::setOutput(const uint8_t *report, size_t length) {
-    assert(isOpen()); outputs.emplace_back(report, report + length);
-    if (failOutput) { failOutput = false; error_ = "simulated output failure"; return false; }
     return true;
 }
 }
