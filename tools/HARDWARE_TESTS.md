@@ -76,6 +76,17 @@ A read-only check found all saved `_joy_ffb_axis*` flags zero. X-Plane 12's
 documented control-loaded `.joy` setting is required to prevent simultaneous
 simulator/plugin trim-center offsets. No joystick preferences were changed.
 
+Mechanical/aerodynamic spring loads now remain separate through smoothing;
+independent gains also separate mechanical and airflow-dependent damping.
+The default spring curve and maximum motor settings are retained. Native
+ground damping now has coefficient 2 (formerly a fixed 8), increasing to 8
+at reference pressure; its cap is quantized like the spring cap. Damping-only
+profiles and pause fades are covered by mock tests. The original Linux driver
+sends fresh reports per effect, so the G940 uses one software-mixed constant
+effect to retain both spring and velocity resistance, with native spring
+fallback for spring-only drivers. No new hardware test has validated these
+damping changes or the Linux software path.
+
 Software tests cover the pressure units, speed-squared/density scaling, ground
 baseline, increasing stiffness/caps, bounded maximums, trim equilibrium and
 asymmetric travel, static bias, trim-type behavior, steady out-of-trim pressure,

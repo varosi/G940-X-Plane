@@ -101,7 +101,7 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         const bool startingRelease = !forceSmoother.releasing();
 #endif
         const g940::ForceState state = forceSmoother.release(elapsed);
-        if (state.pressureRatio <= 0.0f || state.effectScale <= 0.0f) {
+        if (!state.hasLoad() || state.effectScale <= 0.0f) {
             if (!g940::releaseForceFeedback()) {
                 reportError(); g940::closeForceFeedback();
             }
@@ -144,17 +144,18 @@ float flightLoopCallback(float elapsed, float, int, void *) {
 #ifdef G940_DEBUG_FORCE
     const auto now = std::chrono::steady_clock::now();
     if (now >= nextForceTrace) {
-        char message[384];
+        char message[512];
         std::snprintf(message, sizeof(message),
-            "G940 FF trace: q=%.2f Pa ratio=%.3f "
+            "G940 FF trace: q=%.2f Pa ratio=%.3f mechanical=%.3f aerodynamic=%.3f damping=%.3f "
             "yoke=(%.3f,%.3f) trim=(%.3f,%.3f) alpha=%.2f stab=%.2f centers=(%.3f,%.3f) "
             "coeff=(%u,%u) spring=(%.3f,%.3f) scale=%.3f\n",
-            pressurePa, state.pressureRatio, roll, pitch, aileronTrim, elevatorTrim,
+            pressurePa, state.springRatio(), state.mechanicalRatio, state.aerodynamicRatio, state.dampingRatio,
+            roll, pitch, aileronTrim, elevatorTrim,
             alpha, stabilizer, state.roll, state.pitch,
-            g940::springCoefficient(state.pressureRatio * state.effectScale, 0),
-            g940::springCoefficient(state.pressureRatio * state.effectScale, 1),
-            g940::springSaturationRatio(state.pressureRatio, 0) * state.effectScale,
-            g940::springSaturationRatio(state.pressureRatio, 1) * state.effectScale,
+            g940::springCoefficient(state.springRatio() * state.effectScale, 0),
+            g940::springCoefficient(state.springRatio() * state.effectScale, 1),
+            g940::springSaturationRatio(state.springRatio(), 0) * state.effectScale,
+            g940::springSaturationRatio(state.springRatio(), 1) * state.effectScale,
             state.effectScale);
         XPLMDebugString(message);
         nextForceTrace = now + std::chrono::seconds(2);

@@ -34,11 +34,11 @@ Each output axis uses these offsets, excluding its report ID:
 
 Equal boundaries define the spring center without deadband. Native centers
 span ±32767; maximum roll/pitch coefficients are 80/112 and caps 20480/28672.
-Damping uses coefficient 8 and saturation 4096 × pressure strength. Unused fields
+Damping uses maximum coefficient 8 and saturation 4096, with independent load settings. Unused fields
 remain zero; a zero-filled report with ID 2 stops live force. Linux evdev
 coefficients are shifted by eight bits and saturation uses twice the native
-cap. Its constant-force fallback supplies stick-dependent restoring force,
-with the same smoothed equilibrium, pressure strength and per-axis caps.
+cap. Its constant-force path supplies restoring force and motion damping,
+with the same smoothed equilibrium, spring strength and per-axis caps.
 
 ## Model and lifecycle
 
@@ -56,8 +56,10 @@ identity selects this preset for Socata; unmatched aircraft use General with
 trim gains 1 and an automatic Vne-based pressure reference. These are starting
 gains, not measured hinge moments or grip forces. See configuration below.
 
-Aerodynamic stiffness is `a = (1 − m) × clamp(q / qref, 0, 1)` and total
-strength is `s = m + a`. Roll/pitch coefficients are `round(80 × s)` and
+Mechanical stiffness `m = mechanical_ratio` is independent of pressure.
+Aerodynamic stiffness is `a = min(aerodynamic_gain × q / qref, 1)`; the two
+terms remain separate through smoothing, with total rendered strength
+`s = clamp(m + a, 0, 1)`. Roll/pitch coefficients are `round(80 × s)` and
 `round(112 × s)`. Each axis cap is its configured maximum times
 `clamp(s × maximumCoefficient / 64, 0, 1)`, so caps can reach their limits before
 stiffness reaches its maximum. Neither coefficient nor cap exceeds the preceding
@@ -65,7 +67,9 @@ flight-tested maximum. This gives a gentle spring at rest and increasing stiffne
 as well as increasing caps with aerodynamic load.
 
 The equilibrium balance uses **uncapped** aerodynamic load, with weight
-`w = (1 − m) × q / (m × qref + (1 − m) × q)`. Motor strength remains capped
+`w = aerodynamic_gain × q / (m × qref + aerodynamic_gain × q)`. Zero pressure
+or zero aerodynamic gain gives zero aerodynamic weight; with zero mechanical
+stiffness and positive airflow it is one. Motor strength remains capped
 independently; reaching full stiffness must not freeze the equilibrium at an
 80% aerodynamic blend. Roll center is `w × aileronTrim × rollTrimGain`.
 
@@ -76,8 +80,8 @@ Static tab deflection is read separately from `acf_elev_tab`. These contribution
 are combined before converting back to a normalized center using the travel
 in the resulting direction, so asymmetric travel and opposing trim/AoA loads
 can cross zero correctly. Aerodynamic mode weights trim, static tab and airflow
-by `w`. Spring mode applies movable trim without that weight, retaining trim
-at zero airflow. Stabilizer mode excludes the elevator trim input and adds the
+by `w`. Spring mode preloads only the mechanical spring: its trim contribution
+is weighted by `1 - w`, retaining trim at zero airflow. Stabilizer mode excludes the elevator trim input and adds the
 actual stabilizer incidence (positive leading edge up) to alpha instead.
 All centers are clamped to ±1. At zero pressure aerodynamic/stabilizer trim
 has no influence, even with arbitrary ground AoA. Stick movement does not
@@ -92,11 +96,37 @@ artificial-feel profile. The [X-Plane trim types](https://developer.x-plane.com/
 explain why trim tabs, spring trim and THS cannot share one center-offset rule.
 
 Roll centers slew at 0.5 normalized units/s; pitch combines a 250 ms exponential
-filter and 0.25/s limit. Strength ramps at 1/s. Callback intervals are capped
+filter and 0.25/s limit. Mechanical/aerodynamic spring terms share a 1/s slew
+budget; changing one does not silently change the other's configured gain.
+Callback intervals are capped
 at 100 ms for these ramps. Connection/full pause-resume primes the current
 center at zero strength. Pause scales stiffness, saturation and native damping
 with a one-second cubic fade; partial resume ramps back up, while disable and
 backend errors stop immediately. Linux releases its evdev effect on pause.
+
+Damping is a separate movement-dependent load:
+`d = clamp(mechanical_damping + aerodynamic_damping × q / qref, 0, 1)`.
+The native velocity channel uses `round(8 × d × pauseScale)` and a 4096×d cap,
+rounded to 256 like the spring cap. Idle firmware shares its spring/damper cap,
+so a live damper is limited to the spring cap when a spring is present. A
+damper-only effect uses its own cap in both grip modes, with spring coefficient
+zero. Damping is slewed at 1/s independently and participates in the pause fade.
+Neither stiffness nor damping can exceed the existing motor limits.
+
+The [original G940 Linux driver](https://github.com/chrisboyle/G940-linux/blob/main/drivers/hid/hid-lg3ff.c)
+constructs a fresh report for each effect, clearing other effect channels.
+The backend therefore prefers a single `FF_CONSTANT` effect for Logitech
+046d:c287 (also when identity is unavailable), mixing spring and damping in
+software. Constant-only drivers use the same path; spring-only drivers retain
+the original spring without damping. Other devices retain spring preference.
+This uses the [evdev effect lifecycle](https://docs.kernel.org/input/ff.html)
+and requires only one effect slot. Failed uploads/playback/updates clean up the
+effect and connection. Software damping opposes filtered normalized stick
+velocity, with coefficient `round(8 × d)/64` and the same caps. Velocity uses
+elapsed time, a 50 ms filter and ±4 units/s bound. Connection, invalid data and
+pause reset its history so stale movement cannot create a resume impulse.
+This callback-rate estimate is an approximation to native velocity damping;
+no dry friction, inertia or simulator input override is introduced.
 
 The firmware selects idle centering when the grip is uncovered. Native backends
 back up features 5, 6 and 10 before any write, then zero live and idle force.
@@ -127,9 +157,12 @@ Enabling the plugin reloads the file, while normal callbacks do no file I/O.
 
 | Setting | Values / meaning |
 | --- | --- |
-| `reference_speed_knots` | `auto` or 1–1000 KEAS; full-stiffness pressure reference |
+| `reference_speed_knots` | `auto` or 1–1000 KEAS; aerodynamic pressure normalization reference |
 | `fallback_reference_speed_knots` | 1–1000 KEAS when auto has no usable Vne |
-| `mechanical_ratio` | 0.001–1; stationary stiffness fraction |
+| `mechanical_ratio` | 0–1; stationary spring stiffness fraction, default 0.2 |
+| `aerodynamic_gain` | `auto` or 0–4; added spring stiffness at qref; supplied 0.8, omitted/auto retains legacy `1 - mechanical_ratio` |
+| `mechanical_damping` | 0–1; pressure-independent movement resistance, default 0.2 |
+| `aerodynamic_damping` | 0–4; added damping at qref, default 0.8; total damping capped at 1 |
 | `roll_trim_gain`, `pitch_trim_gain` | −10–10; multiplier of live normalized trim |
 | `pitch_aoa_deflection_gain` | −15–15 degrees free elevator per degree AoA; default 0.45 |
 | `pitch_aoa_gain` | Legacy alias, −1–1 normalized units at 15-degree travel; multiplied by 15; do not specify both gains in one section |
@@ -162,7 +195,8 @@ own trim-center mapping; [setup instructions](../README.md#x-plane-12-control-lo
 preserve platform-specific axis assignments.
 
 Missing files use built-in General defaults (`auto`, fallback 125 KEAS,
-mechanical 0.2, trim gains 1, AoA deflection gain 0.45, neutral AoA zero,
+mechanical 0.2, aerodynamic gain 0.8, mechanical/aerodynamic damping 0.2/0.8,
+trim gains 1, AoA deflection gain 0.45, neutral AoA zero,
 automatic geometry/trim mode). Invalid files
 prevent enabling force feedback and log errors with line numbers where applicable.
 The source installer preserves existing configuration; ZIP upgrades must keep

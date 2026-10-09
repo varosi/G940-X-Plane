@@ -151,6 +151,23 @@ For example, change `reference_speed_knots = 150` in the Socata section to reach
 maximum stiffness at 150 KEAS, or change `pitch_trim_gain` to adjust trim pressure.
 The existing motor coefficient and force ceilings still bound every profile.
 
+`mechanical_ratio` controls the spring resistance present without airflow.
+`aerodynamic_gain` independently controls the spring load added by dynamic
+pressure; the supplied presets use 0.2 and 0.8 respectively. Old configuration
+files without `aerodynamic_gain` retain their previous `1 - mechanical_ratio`
+curve. `mechanical_damping` controls resistance to movement at rest, while
+`aerodynamic_damping` adds movement resistance with airflow. Both default to
+0.2/0.8 and remain within the existing damper limits. Damping does not add a
+steady force when the stick stops. Spring trim preloads the mechanical spring;
+aerodynamic trim shifts the aerodynamic equilibrium.
+
+macOS/Windows render the combined spring and damper through native channels.
+Linux uses one constant-force effect for the G940 because its original driver
+sends a whole report for each effect; separate spring/damper effects can erase
+each other. This path estimates velocity from simulator input at the callback
+rate with a 50 ms filter. Spring-only drivers retain spring feedback without
+software damping. These transport approximations still need hardware tuning.
+
 Profiles change automatically when the user's aircraft loads; AI aircraft
 notifications are ignored. To reload edits, disable/re-enable g940FF in Plugin
 Admin. `Log.txt` shows the selected profile and reference source. A missing file
@@ -182,6 +199,7 @@ describes exporting and applying defaults.
 
 `make test` checks profile parsing/selection/reload, simulator reference fallback,
 pressure scaling, trim equilibrium, packet encoding, filtering, invalid inputs, pause fades,
+independent mechanical/aerodynamic loads, motion damping and Linux effect cleanup,
 dataref types, lifecycle/reconnection, native backup/rollback/restoration and
 installation without moving hardware. Only the test runners keep assertions
 enabled when testing release builds. CI runs these checks and validates the

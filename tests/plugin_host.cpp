@@ -168,7 +168,9 @@ int main() {
     assert(observedLEDs[2] == g940::GREEN);
 #else
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
-    assert(std::abs(observedForce.pressureRatio - .6) < .001); // Qstatic psf converted to Pa
+    assert(std::abs(observedForce.springRatio() - .6) < .001); // Qstatic psf converted to Pa
+    assert(std::abs(observedForce.mechanicalRatio - .2f) < .001 && std::abs(observedForce.aerodynamicRatio - .4f) < .001);
+    assert(std::abs(observedForce.dampingRatio - .6f) < .001);
     assert(std::abs(observedForce.roll) < .001);
     assert(std::abs(observedForce.pitch - 1.0f / 15.0f) < .001); // static tab, live trim and AoA
     assert(std::abs(observedForce.rollForce + .1) < .001);
@@ -178,11 +180,12 @@ int main() {
     refs["sim/flightmodel/position/alpha"].value = -121;
     refs["sim/flightmodel2/controls/elevator_trim"].value = .2;
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
-    assert(std::abs(observedForce.pressureRatio - g940::minimumForceRatio) < .001);
+    assert(std::abs(observedForce.springRatio() - g940::minimumForceRatio) < .001);
+    assert(observedForce.aerodynamicRatio == 0 && std::abs(observedForce.dampingRatio - .2f) < .001);
     assert(std::abs(observedForce.pitch) < .001); // no spurious ground AoA pull
     refs["sim/flightmodel/misc/Qstatic"].value = -1;
     callback(0, 0, 0, nullptr);
-    assert(observedForce.pressureRatio == 0);
+    assert(observedForce.springRatio() == 0);
     refs["sim/time/paused"].value = 1;
     callback(0, 0, 0, nullptr);
     assert(deviceOpen && releases == 1 && closes == 0);
@@ -210,7 +213,7 @@ int main() {
     refs["sim/flightmodel2/controls/elevator_trim"].value = .3f;
     refs["sim/flightmodel2/controls/aileron_trim"].value = -.1f;
     callback(.02f, 0, 0, nullptr);
-    assert(deviceOpen && observedForce.pressureRatio <= .020001);
+    assert(deviceOpen && observedForce.springRatio() <= .020001);
     // Resume establishes the current trim center before raising the force,
     // so neither grip mode briefly pulls toward a stale neutral position.
     assert(std::abs(observedForce.pitch - 4.0f / 15.0f) < .00001f);
@@ -228,12 +231,12 @@ int main() {
     refs["sim/flightmodel2/controls/stabilizer_deflection_degrees"].value = 3;
     XPluginReceiveMessage(XPLM_PLUGIN_XPLANE, XPLM_MSG_PLANE_LOADED, reinterpret_cast<void *>(1));
     callback(.02f, 0, 0, nullptr);
-    assert(std::abs(observedForce.pressureRatio - .6f) < .001); // ignore AI plane changes
+    assert(std::abs(observedForce.springRatio() - .6f) < .001); // ignore AI plane changes
     XPluginReceiveMessage(XPLM_PLUGIN_XPLANE, XPLM_MSG_PLANE_LOADED, nullptr);
     callback(.02f, 0, 0, nullptr);
-    assert(observedForce.effectScale <= .020001f && observedForce.pressureRatio <= .020001f);
+    assert(observedForce.effectScale <= .020001f && observedForce.springRatio() <= .020001f);
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
-    assert(std::abs(observedForce.pressureRatio - .2540657f) < .001); // General at Vne=340
+    assert(std::abs(observedForce.springRatio() - .2540657f) < .001); // General at Vne=340
     assert(debugLog.find("profile 'General' for Boeing 737.acf") != std::string::npos);
     assert(debugLog.find("340.0 kt (X-Plane Vne scaling)") != std::string::npos);
     assert(debugLog.find("pitch trim stabilizer, elevator travel +30.0/-15.0 deg, static tab 0.000") != std::string::npos);
@@ -268,7 +271,7 @@ int main() {
     std::ofstream(configFolder / "aircraft.ini") << "[General]\nreference_speed_knots=150\npitch_aoa_gain=0\npitch_trim_mode=spring\n";
     assert(XPluginEnable() == 1);
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
-    assert(std::abs(observedForce.pressureRatio - .4777778f) < .001); // reread config on enable
+    assert(std::abs(observedForce.springRatio() - .4777778f) < .001); // reread config on enable
     assert(observedForce.pitch > 0);
     XPluginDisable();
     const int registrationsBeforeBadConfig = registrations;
@@ -285,9 +288,24 @@ int main() {
     assert(XPluginStart(name, signature, description) == 1); // optional metadata absent
     assert(XPluginEnable() == 1);
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
-    assert(std::abs(observedForce.pressureRatio - .6f) < .001); // built-in reference fallback
+    assert(std::abs(observedForce.springRatio() - .6f) < .001); // built-in reference fallback
     assert(debugLog.find("aircraft.ini missing") != std::string::npos);
     assert(debugLog.find("pitch trim aerodynamic, elevator travel +15.0/-15.0 deg, static tab 0.000") != std::string::npos);
+    XPluginStop();
+    // A damping-only profile must survive the flight/pause lifecycle even
+    // though its spring strength is zero. It must not restart while paused.
+    std::ofstream(configFolder / "aircraft.ini") << "[General]\nmechanical_ratio=0\naerodynamic_gain=0\n"
+        "mechanical_damping=.5\naerodynamic_damping=0\n";
+    assert(XPluginEnable() == 1);
+    for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+    assert(observedForce.hasLoad() && observedForce.springRatio() == 0 && observedForce.dampingRatio == .5f);
+    refs["sim/time/paused"].value = 1;
+    callback(.02f, 0, 0, nullptr);
+    assert(observedForce.effectScale > .99f); // starts the requested one-second fade
+    for (int i = 0; i < 60; ++i) callback(.02f, 0, 0, nullptr);
+    const int dampedOpens = opens;
+    callback(.2f, 0, 0, nullptr);
+    assert(opens == dampedOpens);
     XPluginStop();
     std::filesystem::remove_all(configRoot);
 #endif

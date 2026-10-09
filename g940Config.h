@@ -22,6 +22,7 @@ struct ConfigProfile {
     AircraftProfile force;
     std::optional<PitchTrimMode> pitchTrimMode;
     std::optional<float> elevatorUpDegrees, elevatorDownDegrees, staticPitchTrim;
+    std::optional<float> aerodynamicGain;
 };
 
 struct AircraftGeometry {
@@ -100,7 +101,9 @@ inline std::vector<ConfigProfile> readAircraftConfig(std::istream& input) {
         profile.name = section.name;
         struct Field { const char *key; float AircraftProfile::*member; float low, high; };
         const Field fields[] = {
-            {"mechanical_ratio", &AircraftProfile::mechanicalRatio, .001f, 1.0f},
+            {"mechanical_ratio", &AircraftProfile::mechanicalRatio, 0.0f, 1.0f},
+            {"mechanical_damping", &AircraftProfile::mechanicalDamping, 0.0f, 1.0f},
+            {"aerodynamic_damping", &AircraftProfile::aerodynamicDamping, 0.0f, 4.0f},
             {"roll_trim_gain", &AircraftProfile::rollTrimGain, -10.0f, 10.0f},
             {"pitch_trim_gain", &AircraftProfile::pitchTrimGain, -10.0f, 10.0f},
             {"pitch_aoa_deflection_gain", &AircraftProfile::pitchAoADeflectionGain, -15.0f, 15.0f},
@@ -116,6 +119,10 @@ inline std::vector<ConfigProfile> readAircraftConfig(std::istream& input) {
                 else if (key == "reference_speed_knots")
                     profile.referenceKnots = lowerConfigText(value) == "auto" ? 0.0f : configNumber(value, 1, 1000);
                 else if (key == "fallback_reference_speed_knots") profile.fallbackKnots = configNumber(value, 1, 1000);
+                else if (key == "aerodynamic_gain") {
+                    if (lowerConfigText(value) == "auto") profile.aerodynamicGain.reset();
+                    else profile.aerodynamicGain = configNumber(value, 0, 4);
+                }
                 else if (key == "pitch_trim_mode") {
                     const auto mode = lowerConfigText(value);
                     if (mode == "auto") profile.pitchTrimMode.reset();
@@ -190,6 +197,8 @@ inline AircraftProfile resolveAircraftProfile(const ConfigProfile& profile, floa
     auto force = profile.force;
     const float speed = referenceSpeed(profile, vneKnots) * knotsToMps;
     force.referencePressurePa = 0.5f * seaLevelDensity * speed * speed;
+    // Preserve the old stiffness curve for configurations without this key.
+    force.aerodynamicGain = profile.aerodynamicGain.value_or(1.0f - force.mechanicalRatio);
     const auto travel = [](float value, float fallback) {
         return std::isfinite(value) && value >= .1f && value <= 90.0f ? value : fallback;
     };

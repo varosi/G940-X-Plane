@@ -36,6 +36,22 @@ bool writeLED(unsigned label, const char *component, bool on) {
     close(file);
     return success;
 }
+bool startEffect(int file, ff_effect& target) {
+    target.id = -1;
+    if (ioctl(file, EVIOCSFF, &target) < 0) return false;
+    input_event play = {};
+    play.type = EV_FF; play.code = target.id; play.value = 1;
+    if (write(file, &play, sizeof(play)) == sizeof(play)) return true;
+    systemError("Play effect");
+    ioctl(file, EVIOCRMFF, target.id);
+    target.id = -1;
+    return false;
+}
+void setConstant(ff_effect& target, const std::array<float, 2>& force, float scale) {
+    target.u.constant.level = clamp(std::hypot(force[0], force[1]), 0.0f, 1.0f) * 0x7fff * scale;
+    const float angle = std::atan2(-force[0], force[1]);
+    target.direction = static_cast<uint16_t>(static_cast<int>(angle * 32768.0f / std::acos(-1.0f)));
+}
 bool tryJoystick(const char *path) {
     const int candidate = open(path, O_RDWR | O_NONBLOCK);
     if (candidate < 0) { systemError(path); return false; }
@@ -46,21 +62,23 @@ bool tryJoystick(const char *path) {
         return (bits[type / (8 * sizeof(unsigned long))] >> (type % (8 * sizeof(unsigned long)))) & 1;
     };
     if (!supports(FF_SPRING) && !supports(FF_CONSTANT)) { close(candidate); return false; }
+    input_id identity{};
+    const bool identityKnown = ioctl(candidate, EVIOCGID, &identity) >= 0;
+    const bool composite = !identityKnown || (identity.vendor == 0x046d && identity.product == 0xc287);
     effect = ff_effect();
     effect.id = -1;
-    haveSpring = supports(FF_SPRING);
+    // The original G940 condition driver sends a fresh whole HID report for
+    // each effect; a separate damper would erase its spring (and vice versa).
+    // Render both in one constant effect for that device. Retain the original
+    // native spring path for other devices and spring-only drivers.
+    haveSpring = supports(FF_SPRING) && (!composite || !supports(FF_CONSTANT));
     effect.type = haveSpring ? FF_SPRING : FF_CONSTANT;
-    if (ioctl(candidate, EVIOCSFF, &effect) < 0) {
+    if (!startEffect(candidate, effect)) {
         haveSpring = false;
         effect.type = FF_CONSTANT;
-        if (!supports(FF_CONSTANT) || ioctl(candidate, EVIOCSFF, &effect) < 0) {
+        if (!supports(FF_CONSTANT) || !startEffect(candidate, effect)) {
             systemError(std::string(path) + " upload effect"); close(candidate); return false;
         }
-    }
-    input_event play = {};
-    play.type = EV_FF; play.code = effect.id; play.value = 1;
-    if (write(candidate, &play, sizeof(play)) != sizeof(play)) {
-        systemError("Play effect"); close(candidate); return false;
     }
     forceFD = candidate;
     return true;
@@ -151,17 +169,12 @@ bool updateForceFeedback(const ForceState& state) {
             auto& condition = effect.u.condition[axis];
             condition.center = clamp(centers[axis], -1.0f, 1.0f) * 0x7fff;
             condition.left_coeff = condition.right_coeff =
-                springCoefficient(state.pressureRatio * scale, axis) << 8;
+                springCoefficient(state.springRatio() * scale, axis) << 8;
             condition.left_saturation = condition.right_saturation =
-                springSaturationRatio(state.pressureRatio, axis) * (2 * springMaximums[axis]) * scale;
+                2 * springCap(state, axis, scale);
         }
     } else {
-        const auto components = constantForceComponents(state);
-        const float roll = components[0], pitch = components[1];
-        effect.u.constant.level = clamp(std::hypot(roll, pitch), 0.0f, 1.0f) * 0x7fff * scale;
-        const float angle = std::atan2(-roll, pitch);
-        const int direction = angle * 32768.0f / std::acos(-1.0f);
-        effect.direction = static_cast<uint16_t>(direction);
+        setConstant(effect, constantForceComponents(state), scale);
     }
     if (ioctl(forceFD, EVIOCSFF, &effect) >= 0) return true;
     systemError("Update effect");
@@ -170,7 +183,7 @@ bool updateForceFeedback(const ForceState& state) {
     lastError = updateError;
 #else
     bool success;
-    if (state.pressureRatio <= 0.0f || !std::isfinite(state.pressureRatio) ||
+    if (!state.hasLoad() ||
         clamp(state.effectScale, 0.0f, 1.0f) == 0.0f) {
         success = releaseForceFeedback();
     } else {

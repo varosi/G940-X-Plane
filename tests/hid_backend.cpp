@@ -91,6 +91,12 @@ int main() {
     assert(outputs.back() == std::vector<uint8_t>(stop.begin(), stop.end()));
     assert(releaseForceFeedback() && connections == 1 && idle == disabledIdle);
     assert(openForceFeedback() && idle == disabledIdle); // pause must preserve the original backup
+    ForceState dampingOnly{};
+    dampingOnly.dampingRatio = .5f;
+    assert(updateForceFeedback(dampingOnly));
+    assert(idle[0][1] == 0 && idle[0][2] == 8 && idle[0][3] == 4);
+    assert(outputs.back()[11] == 0 && outputs.back()[23] == 4);
+    assert(releaseForceFeedback() && idle == disabledIdle);
     failOutput = true;
     assert(!updateForceFeedback({.2, -.3, .5}));
     assert(connections == 0);

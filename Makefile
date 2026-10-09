@@ -136,6 +136,10 @@ test: $(SDK_HEADER)
 	"$(BUILDDIR)/tests/leds"
 	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) -ULIN -DLIN=0 $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/hid_backend.cpp g940Backend.cpp -I. -o "$(BUILDDIR)/tests/hid-backend"
 	"$(BUILDDIR)/tests/hid-backend"
+ifeq ($(PLATFORM),linux)
+	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/evdev_backend.cpp -I. -o "$(BUILDDIR)/tests/evdev-backend"
+	"$(BUILDDIR)/tests/evdev-backend"
+endif
 	python3 -m unittest discover -s tests -p 'test_*.py'
 
 probe: $(SDK_HEADER)

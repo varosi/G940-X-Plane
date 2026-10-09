@@ -9,7 +9,7 @@ int main() {
     const LEDState colours = {{RED, GREEN, AMBER, OFF, RED, GREEN, AMBER, OFF}};
     const auto leds = ledReport(colours);
     assert((leds == std::array<uint8_t, 3>{{3, 0x55, 0x66}}));
-    const auto force = forceReport({-1.0, 1.0, 1.0});
+    const auto force = forceReport({-1, 1, 1, 0, 0, 1, 0, 1});
     assert(force[0] == 2 && force.size() == 64);
     assert(force[7] == 0x01 && force[8] == 0x80); // signed roll center
     assert(force[9] == 0x01 && force[10] == 0x80);
@@ -37,16 +37,16 @@ int main() {
     const float referencePressure = defaultProfile.referencePressurePa;
     assert(referencePressure > 2530 && referencePressure < 2540); // 125 KEAS, Pa
     const auto stationary = calculateForce(.2, -.2, 0, -121, .2, .1);
-    assert(stationary.pressureRatio == minimumForceRatio);
+    assert(stationary.springRatio() == minimumForceRatio);
     assert(stationary.roll == 0 && stationary.pitch == 0); // ground AoA/trim cannot pull
     assert(stationary.rollForce < 0 && stationary.pitchForce > 0);
     const auto groundReport = forceReport(stationary);
     assert(groundReport[11] == 16 && groundReport[41] == 22);
     assert(groundReport[14] != 0 && groundReport[44] != 0);
     const auto taxi = calculateForce(0, 0, 1, -121, .2, .1);
-    assert(taxi.pressureRatio > minimumForceRatio && taxi.pitch < .01);
+    assert(taxi.springRatio() > minimumForceRatio && taxi.pitch < .01);
     const auto blended = calculateForce(0, 0, referencePressure / 2, 5, .2, .1);
-    assert(std::abs(blended.pressureRatio - .6) < 1e-6);
+    assert(std::abs(blended.springRatio() - .6) < 1e-6);
     assert(std::abs(blended.roll - .06666667) < 1e-6);
     assert(std::abs(blended.pitch - .03333333) < 1e-6);
 
@@ -57,43 +57,50 @@ int main() {
     const auto slow = calculateForce(0, 0, slowQ, 0, 0, 0);
     const auto fast = calculateForce(0, 0, 4 * slowQ, 0, 0, 0);
     const auto thinAir = calculateForce(0, 0, 2 * slowQ, 0, 0, 0);
-    assert(std::abs(slow.pressureRatio - .4) < 1e-6);
-    assert(std::abs(fast.pressureRatio - 1) < 1e-6);
-    assert(std::abs(thinAir.pressureRatio - .6) < 1e-6);
+    assert(std::abs(slow.springRatio() - .4) < 1e-6);
+    assert(std::abs(fast.springRatio() - 1) < 1e-6);
+    assert(std::abs(thinAir.springRatio() - .6) < 1e-6);
+    assert(stationary.mechanicalRatio == slow.mechanicalRatio && slow.mechanicalRatio == fast.mechanicalRatio);
+    assert(stationary.aerodynamicRatio == 0);
+    assert(std::abs(fast.aerodynamicRatio - 4 * slow.aerodynamicRatio) < 1e-6f);
+    assert(std::abs(stationary.dampingRatio - .2f) < 1e-6f && std::abs(fast.dampingRatio - 1) < 1e-6f);
     const auto slowReport = forceReport(slow), fastReport = forceReport(fast);
     assert(slowReport[11] < fastReport[11] && slowReport[41] < fastReport[41]);
     assert(slowReport[14] < fastReport[14] && slowReport[44] < fastReport[44]);
-    assert(calculateForce(0, 0, 100 * referencePressure, 0, 0, 0).pressureRatio == 1);
+    assert(calculateForce(0, 0, 100 * referencePressure, 0, 0, 0).springRatio() == 1);
     // Capping motor strength must not freeze the trim force balance at qref.
     const auto referenceTrim = calculateForce(0, 0, referencePressure, 0, .5f, 0);
     const auto highSpeedTrim = calculateForce(0, 0, 2 * referencePressure, 0, .5f, 0);
-    assert(referenceTrim.pressureRatio == 1 && highSpeedTrim.pressureRatio == 1);
+    assert(referenceTrim.springRatio() == 1 && highSpeedTrim.springRatio() == 1);
     assert(std::abs(referenceTrim.pitch - .4f) < 1e-6f);
     assert(std::abs(highSpeedTrim.pitch - (4.0f / 9.0f)) < 1e-6f);
     auto profile = defaultProfile;
     profile.referencePressurePa *= 2;
-    assert(std::abs(calculateForce(0, 0, referencePressure, 0, 0, 0, profile).pressureRatio - .6) < 1e-6);
+    assert(std::abs(calculateForce(0, 0, referencePressure, 0, 0, 0, profile).springRatio() - .6) < 1e-6);
     profile.referencePressurePa = 0;
-    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).pressureRatio == 0);
+    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).springRatio() == 0);
     profile = defaultProfile;
     profile.mechanicalRatio = -1;
-    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).pressureRatio == 0);
+    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).springRatio() == 0);
     profile.mechanicalRatio = 2;
-    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).pressureRatio == 0);
+    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).springRatio() == 0);
     const float nan = std::numeric_limits<float>::quiet_NaN();
     const float infinity = std::numeric_limits<float>::infinity();
-    assert(calculateForce(0, 0, -1, 0, 0, 0).pressureRatio == 0);
-    assert(calculateForce(0, 0, nan, 0, 0, 0).pressureRatio == 0);
-    assert(calculateForce(0, 0, infinity, 0, 0, 0).pressureRatio == 0);
-    assert(calculateForce(0, 0, 100, infinity, 0, 0).pressureRatio == 0);
-    assert(calculateForce(nan, 0, 100, 0, 0, 0).pressureRatio == 0);
-    assert(calculateForce(0, 0, 100, 0, infinity, 0).pressureRatio == 0);
+    assert(calculateForce(0, 0, -1, 0, 0, 0).springRatio() == 0);
+    assert(calculateForce(0, 0, nan, 0, 0, 0).springRatio() == 0);
+    assert(calculateForce(0, 0, infinity, 0, 0, 0).springRatio() == 0);
+    assert(calculateForce(0, 0, 100, infinity, 0, 0).springRatio() == 0);
+    assert(calculateForce(nan, 0, 100, 0, 0, 0).springRatio() == 0);
+    assert(calculateForce(0, 0, 100, 0, infinity, 0).springRatio() == 0);
     profile = defaultProfile;
     profile.pitchTrimGain = nan;
-    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).pressureRatio == 0);
+    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).springRatio() == 0);
     profile = defaultProfile;
     profile.referencePressurePa = .00001f;
-    assert(calculateForce(0, 0, std::numeric_limits<float>::max(), 0, 0, 0, profile).pressureRatio == 1);
+    assert(calculateForce(0, 0, std::numeric_limits<float>::max(), 0, 0, 0, profile).springRatio() == 1);
+    profile.referencePressurePa = .001f; profile.aerodynamicGain = 1e-40f;
+    const auto extremeBalance = calculateForce(0, 0, 1e38f, 0, .5f, 0, profile);
+    assert(extremeBalance.hasLoad() && extremeBalance.pitch > .48f && extremeBalance.pitch < .5f);
     const auto invalid = forceReport({nan, nan, nan});
     assert(invalid[7] == 0 && invalid[37] == 0 && invalid[13] == 0);
     assert(forceReport({0, 0, 1, 0, 0, nan}) == stop);
@@ -107,16 +114,51 @@ int main() {
     const auto invalidConstant = constantForceComponents({0, 0, nan, infinity, nan});
     assert(invalidConstant[0] == 0 && invalidConstant[1] == 0);
 
+    // Change ground resistance without silently changing the aerodynamic
+    // gain. A damping-only setup must remain active at zero airspeed.
+    profile = defaultProfile;
+    profile.mechanicalRatio = .1f;
+    const auto lighterMechanical = calculateForce(0, 0, referencePressure / 2, 0, .3f, 0, profile);
+    assert(std::abs(lighterMechanical.aerodynamicRatio - blended.aerodynamicRatio) < 1e-6f);
+    assert(std::abs(lighterMechanical.springRatio() - .5f) < 1e-6f);
+    profile.mechanicalRatio = profile.aerodynamicGain = 0;
+    profile.mechanicalDamping = .5f; profile.aerodynamicDamping = 0;
+    auto dampingOnly = calculateForce(.2f, -.2f, 0, 5, .3f, 0, profile);
+    assert(dampingOnly.hasLoad() && dampingOnly.springRatio() == 0 && dampingOnly.dampingRatio == .5f);
+    const auto dampingOnlyReport = forceReport(dampingOnly);
+    assert(dampingOnlyReport[11] == 0 && dampingOnlyReport[23] == 4);
+    assert(dampingOnlyReport[26] == 8); // 2048 force cap; no spring
+    assert(idleForceReport(dampingOnlyReport, 0)[2] == 8);
+    assert(constantForceComponents(dampingOnly)[0] == 0); // displacement alone cannot make damping force
+    dampingOnly.rollVelocity = 1; dampingOnly.pitchVelocity = -1;
+    const auto opposedMotion = constantForceComponents(dampingOnly);
+    assert(opposedMotion[0] < 0 && opposedMotion[1] > 0);
+    dampingOnly.rollVelocity = 100;
+    assert(std::abs(constantForceComponents(dampingOnly)[0] + 2048.0f / 32767) < 1e-6f);
+    profile.mechanicalDamping = profile.aerodynamicDamping = 0;
+    assert(!calculateForce(0, 0, 0, 0, 0, 0, profile).hasLoad());
+    profile = defaultProfile;
+    profile.aerodynamicGain = 0; profile.aerodynamicDamping = 0;
+    const auto mechanicalOnly = calculateForce(0, 0, 100 * referencePressure, 10, 1, 1, profile);
+    assert(mechanicalOnly.springRatio() == minimumForceRatio && mechanicalOnly.roll == 0 && mechanicalOnly.pitch == 0);
+    assert(std::abs(mechanicalOnly.dampingRatio - .2f) < 1e-6f);
+    profile = defaultProfile;
+    profile.mechanicalDamping = 0;
+    assert(calculateForce(0, 0, 0, 0, 0, 0, profile).dampingRatio == 0);
+    profile.aerodynamicGain = nan;
+    assert(!calculateForce(0, 0, 100, 0, 0, 0, profile).hasLoad());
+
     assert((idleCenterReport(force) == std::array<uint8_t, 5>{{10, 1, 128, 255, 127}}));
     assert((idleForceReport(force, 0) == std::array<uint8_t, 4>{{5, 80, 80, 8}}));
     assert((idleForceReport(force, 1) == std::array<uint8_t, 4>{{6, 112, 112, 8}}));
     for (int i = 0; i <= 100; ++i) {
-        const auto sample = forceReport({.1, -.3, i / 100.0f, 0, 0, .6});
+        const auto sample = forceReport({.1, -.3, i / 100.0f, 0, 0, .6f, 0, .7f});
         for (unsigned axis = 0; axis < 2; ++axis) {
             const auto idle = idleForceReport(sample, axis);
             const unsigned start = 1 + 30 * axis;
             assert(sample[start + 12] == 0); // same /256 cap in both grip modes
-            assert(idle[1] == sample[start + 10] && idle[2] == sample[start + 13]);
+            assert(idle[1] == sample[start + 10]);
+            assert(idle[2] == (sample[start + 10] ? sample[start + 13] : sample[start + 25]));
             assert(idle[3] == sample[start + 22]);
             assert(idle[2] < 128); // positive signed firmware saturation
         }
@@ -169,6 +211,7 @@ int main() {
     assert(std::abs(constantForceComponents(pressureAfterTrim)[1]) < 1e-6f);
     profile.pitchTrimMode = PitchTrimMode::spring;
     assert(std::abs(calculateForce(0, 0, 0, 6, .2f, 0, profile).pitch - .2f) < 1e-6f);
+    assert(std::abs(calculateForce(0, 0, q, 6, .2f, 0, profile).pitch - 1.0f / 15.0f) < 1e-6f);
     profile.pitchTrimMode = PitchTrimMode::stabilizer;
     // Elevator trim input must not be counted again for a THS. Incidence
     // affects aerodynamic loading, but cannot move the center at zero q.
@@ -177,9 +220,9 @@ int main() {
     assert(calculateForce(0, 0, q, 0, -1, 0, profile, 6).pitch == ths.pitch);
     assert(calculateForce(0, 0, q, 0, 0, 0, profile, 9).pitch < 0);
     assert(calculateForce(0, 0, 0, 0, 1, 0, profile, 9).pitch == 0);
-    assert(calculateForce(0, 0, q, 0, 0, 0, profile, nan).pressureRatio == 0);
+    assert(calculateForce(0, 0, q, 0, 0, 0, profile, nan).springRatio() == 0);
     profile.elevatorDownDegrees = 0;
-    assert(calculateForce(0, 0, q, 0, 0, 0, profile).pressureRatio == 0);
+    assert(calculateForce(0, 0, q, 0, 0, 0, profile).springRatio() == 0);
 
     ForceSmoother smoother;
     ForceState previous;
@@ -187,25 +230,36 @@ int main() {
         const auto next = smoother.update(trimTarget, .02);
         assert(next.pitch >= previous.pitch);
         assert(next.pitch - previous.pitch <= .005001);
-        assert(next.pressureRatio - previous.pressureRatio <= .020001);
+        assert(next.springRatio() - previous.springRatio() <= .020001);
         previous = next;
     }
     assert(std::abs(previous.pitch - trimTarget.pitch) < 1e-4);
-    assert(std::abs(previous.pressureRatio - trimTarget.pressureRatio) < 1e-6);
+    assert(std::abs(previous.springRatio() - trimTarget.springRatio()) < 1e-6);
     const auto reverseTrim = calculateForce(0, 0, referencePressure / 2, 0, -.5, -.1);
     const auto afterLongFrame = smoother.update(reverseTrim, 100);
     assert(previous.pitch - afterLongFrame.pitch <= .025001);
     const auto invalidPressure = calculateForce(0, 0, -1, 0, 0, 0);
     const auto invalidState = smoother.update(invalidPressure, .02);
-    assert(invalidState.pressureRatio == 0); // invalid data stops immediately, even during a ramp
+    assert(invalidState.springRatio() == 0); // invalid data stops immediately, even during a ramp
     smoother.reset();
     const auto restarted = smoother.update(trimTarget, .02);
-    assert(restarted.pitch <= .005001 && restarted.pressureRatio <= .020001);
+    assert(restarted.pitch <= .005001 && restarted.springRatio() <= .020001);
     smoother.reset(trimTarget);
     const auto primed = smoother.update(trimTarget, .02f);
     assert(primed.pitch == trimTarget.pitch && primed.roll == trimTarget.roll);
-    assert(primed.pressureRatio <= .020001f && primed.effectScale <= .020001f);
+    assert(primed.springRatio() <= .020001f && primed.effectScale <= .020001f);
     assert(std::abs(primed.pitchForce - trimTarget.pitchForce) < 1e-6f);
+    assert(primed.rollVelocity == 0 && primed.pitchVelocity == 0);
+    const auto movedStick = calculateForce(.02f, -.02f, referencePressure / 2, 0, .5f, .1f);
+    const auto moving = smoother.update(movedStick, .02f);
+    assert(moving.rollVelocity > 0 && moving.pitchVelocity < 0);
+    assert(moving.pitch == trimTarget.pitch && moving.roll == trimTarget.roll); // motion cannot move the neutral
+    for (int i = 0; i < 100; ++i) smoother.update(movedStick, .02f);
+    const auto stoppedStick = smoother.update(movedStick, .02f);
+    assert(std::abs(stoppedStick.rollVelocity) < 1e-6f && std::abs(stoppedStick.pitchVelocity) < 1e-6f);
+    smoother.release(.1f);
+    const auto movedWhilePaused = smoother.update(trimTarget, .02f);
+    assert(std::abs(movedWhilePaused.rollVelocity) < 1e-6f && std::abs(movedWhilePaused.pitchVelocity) < 1e-6f);
 
     // Small trim steps must be filtered as well as large changes: the old
     // slew limiter applied a small step in one frame.

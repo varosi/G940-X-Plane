@@ -43,6 +43,18 @@ int main() {
     const auto jetForce = resolveAircraftProfile(jet, 340);
     assert(calculateForce(0, 0, 1000, 10, 0, 0, jetForce).pitch == 0);
     assert(referenceSpeed(inherited.front(), 0) == 145);
+    assert(std::abs(jetForce.aerodynamicGain - .7f) < 1e-6f); // legacy config preserves its old curve
+    std::istringstream resistanceInput("[General]\nmechanical_ratio=.1\naerodynamic_gain=.8\n"
+        "mechanical_damping=.3\naerodynamic_damping=.4\n[Zero spring]\nmatch_icao=DAMP\n"
+        "mechanical_ratio=0\naerodynamic_gain=0\n");
+    const auto resistance = readAircraftConfig(resistanceInput);
+    const auto independent = resolveAircraftProfile(resistance.front(), 125);
+    assert(independent.mechanicalRatio == .1f && independent.aerodynamicGain == .8f);
+    assert(independent.mechanicalDamping == .3f && independent.aerodynamicDamping == .4f);
+    const auto damper = resolveAircraftProfile(resistance.back(), 125);
+    assert(damper.mechanicalRatio == 0 && damper.aerodynamicGain == 0 && damper.mechanicalDamping == .3f);
+    std::istringstream legacyGain("[General]\nmechanical_ratio=.3\naerodynamic_gain=auto\n");
+    assert(std::abs(resolveAircraftProfile(readAircraftConfig(legacyGain).front(), 125).aerodynamicGain - .7f) < 1e-6f);
 
     const AircraftGeometry geometry{25, 12, .1f, 10, 4};
     const auto automatic = resolveAircraftProfile(general, 340, geometry);
@@ -81,7 +93,9 @@ int main() {
         "[General]\nelevator_up_degrees=0", "[General]\nelevator_down_degrees=91",
         "[General]\nstatic_pitch_trim=1.1", "[General]\npitch_trim_mode=jet",
         "[General]\npitch_aoa_deflection_gain=16",
-        "[General]\npitch_aoa_deflection_gain=.45\npitch_aoa_gain=.03"
+        "[General]\npitch_aoa_deflection_gain=.45\npitch_aoa_gain=.03",
+        "[General]\naerodynamic_gain=-1", "[General]\naerodynamic_gain=nan",
+        "[General]\nmechanical_damping=1.1", "[General]\naerodynamic_damping=5"
     }) {
         std::istringstream invalid(bad);
         bool rejected = false;

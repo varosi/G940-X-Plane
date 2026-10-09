@@ -161,7 +161,8 @@ int main(int argc, char **argv) {
         std::puts("LED report readback matches; original LED state restored.");
         return 0;
     }
-    auto report = mode == SPRING ? g940::forceReport({0.0, 0.0, 0.1}) : g940::stopReport();
+    // Keep bench parameters independent of the model's separated load gains.
+    auto report = mode == SPRING ? g940::forceReport({0, 0, .1f, 0, 0, 1, 0, .1f}) : g940::stopReport();
     // Keep the advertised 10% of each configured axis cap independent of
     // the flight model's pressure gains and stationary baseline.
     if (mode == SPRING) {
@@ -169,6 +170,8 @@ int main(int argc, char **argv) {
             auto *data = report.data() + 1 + 30 * axis;
             data[10] = data[11] = g940::springCoefficients[axis];
             g940::put16(data + 12, 0.1 * g940::springMaximums[axis]);
+            data[22] = data[23] = g940::dampingCoefficient;
+            g940::put16(data + 24, 0.1 * g940::dampingMaximum);
         }
     }
     if (mode != SPRING) g940::put16(report.data() + (mode == ROLL ? 1 : 31), reverse ? -magnitude : magnitude);
