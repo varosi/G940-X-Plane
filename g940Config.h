@@ -97,7 +97,9 @@ inline std::vector<ConfigProfile> readAircraftConfig(std::istream& input) {
             {"pitch_aoa_gain", &AircraftProfile::pitchAoAGain, -1.0f, 1.0f},
             {"neutral_aoa_degrees", &AircraftProfile::neutralAoADegrees, -90.0f, 90.0f}
         };
-        for (const auto& [key, setting] : section.settings) {
+        for (const auto& entry : section.settings) {
+            const auto& key = entry.first;
+            const auto& setting = entry.second;
             try {
                 const auto& value = setting.value;
                 if (key == "match_icao") profile.icao = configList(value);
