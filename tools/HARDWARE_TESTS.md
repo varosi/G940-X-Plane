@@ -1,6 +1,6 @@
 # G940 hardware findings
 
-Status on 2026-10-09: native macOS force feedback and LEDs operate in X-Plane 12
+Status on 2026-10-09 for the preceding `feature/mac` model: native macOS force feedback and LEDs operate in X-Plane 12
 on Apple Silicon with G940 `046d:c287`, device version `0x0142`, motor power and
 a USB hub. Windows/Linux builds pass; their hardware behavior remains untested.
 Trim and pause release are smooth. The latest flight reported hands-off kicks
@@ -53,7 +53,23 @@ the latest flight ended with a normal shutdown.
 During the last flight a read-only query detected HAND OFF and feature 10
 matched the logged roll/pitch centers. The user has not separately confirmed
 that the revised roll strength is ideal or assessed trim-only flight stability.
-The current refactor preserves this model and its unresolved early kick.
+The `feature/mac` refactor preserved that model and its unresolved early kick.
+
+## Experimental realism model
+
+`feature/realism` starts with a TB10/TB20 profile. It replaces linear TAS/Vne
+strength and fixed stiffness with ambient dynamic pressure, a mechanical spring
+baseline and a pressure-weighted trim equilibrium. Maximum coefficients/caps,
+trim filtering, pause fading and live/idle mirroring are retained. Linux's
+constant-force fallback now reaches zero force at the native spring equilibrium.
+
+Software tests cover the pressure units, speed-squared/density scaling, ground
+baseline, increasing stiffness/caps, bounded maximums, trim equilibrium and
+existing lifecycle/rollback behavior. No new motor or flight test has run for
+this model; preceding flight observations do not validate it. The initial 125
+KEAS reference and trim/AoA gains require tuning, and the grip-release kick
+remains open. Next flight comparisons should use the same tested TB10/TB20;
+warn and obtain readiness before applying forces.
 
 ## Settings and firmware analysis
 

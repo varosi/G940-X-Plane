@@ -163,10 +163,13 @@ int main(int argc, char **argv) {
     }
     auto report = mode == SPRING ? g940::forceReport({0.0, 0.0, 0.1}) : g940::stopReport();
     // Keep the advertised 10% of each configured axis cap independent of
-    // the flight model's airspeed gains and stationary baseline.
+    // the flight model's pressure gains and stationary baseline.
     if (mode == SPRING) {
-        for (unsigned axis = 0; axis < 2; ++axis)
-            g940::put16(report.data() + 1 + 30 * axis + 12, 0.1 * g940::springMaximums[axis]);
+        for (unsigned axis = 0; axis < 2; ++axis) {
+            auto *data = report.data() + 1 + 30 * axis;
+            data[10] = data[11] = g940::springCoefficients[axis];
+            g940::put16(data + 12, 0.1 * g940::springMaximums[axis]);
+        }
     }
     if (mode != SPRING) g940::put16(report.data() + (mode == ROLL ? 1 : 31), reverse ? -magnitude : magnitude);
     std::printf("Next: %s%s for %d seconds, then zero force for %d seconds.\n"

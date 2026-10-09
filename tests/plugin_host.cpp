@@ -8,6 +8,7 @@
 #include "XPLMProcessing.h"
 #include "XPLMUtilities.h"
 #include "g940Backend.h"
+#include "g940ForceModel.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -100,8 +101,7 @@ int main() {
     refs = {
         {"sim/joystick/yoke_roll_ratio", {DATA_FLOAT, .1}},
         {"sim/joystick/yoke_pitch_ratio", {DATA_FLOAT, .2}},
-        {"sim/flightmodel/position/true_airspeed", {DATA_FLOAT, 25.722222}},
-        {"sim/aircraft/view/acf_Vne", {DATA_FLOAT, 100}},
+        {"sim/flightmodel/misc/Qstatic", {DATA_FLOAT, g940::tb10tb20Profile.referencePressurePa / (2 * g940::pascalsPerPsf)}},
         {"sim/flightmodel/position/alpha", {DATA_FLOAT, 5}},
         {"sim/flightmodel2/controls/elevator_trim", {DATA_FLOAT, .1}},
         {"sim/flightmodel2/controls/aileron_trim", {DATA_FLOAT, 0}},
@@ -126,28 +126,27 @@ int main() {
     assert(observedLEDs[2] == g940::GREEN);
 #else
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
-    assert(std::abs(observedForce.speedRatio - .5) < .001);
+    assert(std::abs(observedForce.pressureRatio - .6) < .001); // Qstatic psf converted to Pa
     assert(std::abs(observedForce.roll) < .001);
     assert(std::abs(observedForce.pitch) < .001);
-    assert(std::abs(observedForce.rollForce + .3) < .001);
-    assert(std::abs(observedForce.pitchForce + .3) < .001);
-    refs["sim/flightmodel/position/true_airspeed"].value = 0;
+    assert(std::abs(observedForce.rollForce + .1) < .001);
+    assert(std::abs(observedForce.pitchForce + .2) < .001);
+    refs["sim/flightmodel/misc/Qstatic"].value = 0;
     refs["sim/flightmodel/position/alpha"].value = -121;
     refs["sim/flightmodel2/controls/elevator_trim"].value = .2;
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
-    assert(std::abs(observedForce.speedRatio - g940::minimumForceRatio) < .001);
+    assert(std::abs(observedForce.pressureRatio - g940::minimumForceRatio) < .001);
     assert(std::abs(observedForce.pitch) < .001); // no spurious ground AoA pull
-    refs["sim/aircraft/view/acf_Vne"].value = 0;
+    refs["sim/flightmodel/misc/Qstatic"].value = -1;
     callback(0, 0, 0, nullptr);
-    assert(observedForce.speedRatio == 0);
+    assert(observedForce.pressureRatio == 0);
     refs["sim/time/paused"].value = 1;
     callback(0, 0, 0, nullptr);
     assert(deviceOpen && releases == 1 && closes == 0);
     refs["sim/time/paused"].value = 0;
     callback(0, 0, 0, nullptr);
     assert(deviceOpen);
-    refs["sim/aircraft/view/acf_Vne"].value = 100;
-    refs["sim/flightmodel/position/true_airspeed"].value = 25.722222;
+    refs["sim/flightmodel/misc/Qstatic"].value = g940::tb10tb20Profile.referencePressurePa / (2 * g940::pascalsPerPsf);
     refs["sim/flightmodel/position/alpha"].value = 5;
     refs["sim/flightmodel2/controls/elevator_trim"].value = .1;
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
@@ -168,11 +167,11 @@ int main() {
     refs["sim/flightmodel2/controls/elevator_trim"].value = .3f;
     refs["sim/flightmodel2/controls/aileron_trim"].value = -.1f;
     callback(.02f, 0, 0, nullptr);
-    assert(deviceOpen && observedForce.speedRatio <= .020001);
+    assert(deviceOpen && observedForce.pressureRatio <= .020001);
     // Resume establishes the current trim center before raising the force,
     // so neither grip mode briefly pulls toward a stale neutral position.
-    assert(std::abs(observedForce.pitch - .3f) < .00001f);
-    assert(std::abs(observedForce.roll + .3f) < .00001f);
+    assert(std::abs(observedForce.pitch - .2f) < .00001f);
+    assert(std::abs(observedForce.roll + .2f) < .00001f);
     assert(observedForce.effectScale <= .020001f);
 #endif
     allowUpdate = false;

@@ -4,6 +4,53 @@
 #include "g940Protocol.h"
 
 namespace g940 {
+constexpr float pascalsPerPsf = 47.88026f;
+constexpr float knotsToMps = 0.51444444f;
+constexpr float seaLevelDensity = 1.225f;
+
+struct AircraftProfile {
+    // Initial TB10/TB20 tuning, not measured hinge moments or grip forces.
+    // Full spring stiffness at 125 knots equivalent airspeed.
+    float referencePressurePa = 0.5f * seaLevelDensity *
+        (125.0f * knotsToMps) * (125.0f * knotsToMps);
+    float mechanicalRatio = minimumForceRatio;
+    float rollTrimGain = 3.0f;
+    float pitchTrimGain = 1.5f;
+    float pitchAoAGain = 0.03f;
+    float neutralAoADegrees = 0.0f;
+};
+inline constexpr AircraftProfile tb10tb20Profile{};
+
+inline ForceState calculateForce(float roll, float pitch, float pressurePa,
+                                float alpha, float elevatorTrim, float aileronTrim,
+                                const AircraftProfile& profile = tb10tb20Profile) {
+    if (!std::isfinite(roll) || !std::isfinite(pitch) ||
+        !std::isfinite(pressurePa) || pressurePa < 0.0f ||
+        !std::isfinite(alpha) || !std::isfinite(elevatorTrim) || !std::isfinite(aileronTrim) ||
+        !std::isfinite(profile.referencePressurePa) || profile.referencePressurePa <= 0.0f ||
+        !std::isfinite(profile.mechanicalRatio) || profile.mechanicalRatio <= 0.0f ||
+        profile.mechanicalRatio > 1.0f || !std::isfinite(profile.rollTrimGain) ||
+        !std::isfinite(profile.pitchTrimGain) || !std::isfinite(profile.pitchAoAGain) ||
+        !std::isfinite(profile.neutralAoADegrees)) return {};
+    const float aerodynamic = (1.0f - profile.mechanicalRatio) *
+        (std::min(pressurePa, profile.referencePressurePa) / profile.referencePressurePa);
+    const float stiffness = profile.mechanicalRatio + aerodynamic;
+    // Balance an aerodynamic spring about its trim neutral against a small
+    // mechanical spring about zero. The equilibrium is independent of stick
+    // movement and blends to a centered, gentle mechanical load at zero q.
+    const float aerodynamicWeight = aerodynamic / stiffness;
+    const float rollNeutral = profile.rollTrimGain * clamp(aileronTrim, -1.0f, 1.0f);
+    const float pitchNeutral = profile.pitchTrimGain * clamp(elevatorTrim, -1.0f, 1.0f) -
+        profile.pitchAoAGain * (alpha - profile.neutralAoADegrees);
+    if (!std::isfinite(rollNeutral) || !std::isfinite(pitchNeutral)) return {};
+    const float rollCenter = clamp(rollNeutral * aerodynamicWeight, -1.0f, 1.0f);
+    const float pitchCenter = clamp(pitchNeutral * aerodynamicWeight, -1.0f, 1.0f);
+    // Native springs and the constant-force fallback must share the same
+    // zero-force position; do not apply another stick gain after this center.
+    return {rollCenter, pitchCenter, stiffness,
+        rollCenter - clamp(roll, -1.0f, 1.0f), pitchCenter - clamp(pitch, -1.0f, 1.0f)};
+}
+
 class ForceSmoother {
 public:
     void reset() {
@@ -16,7 +63,7 @@ public:
         // Establish the current trim position while force is zero, rather
         // than pulling toward an artificial zero center after connecting.
         state_ = target;
-        state_.speedRatio = 0.0f;
+        state_.pressureRatio = 0.0f;
         state_.effectScale = 0.0f;
     }
     bool releasing() const { return releasing_; }
@@ -33,8 +80,8 @@ public:
         const float filteredPitch = state_.pitch +
             (pitchTarget - state_.pitch) * (-std::expm1(-dt / 0.25f));
         state_.pitch = approach(state_.pitch, filteredPitch, 0.25f * dt);
-        const float ratio = clamp(target.speedRatio, 0.0f, 1.0f);
-        state_.speedRatio = ratio == 0.0f ? 0.0f : approach(state_.speedRatio, ratio, dt);
+        const float ratio = clamp(target.pressureRatio, 0.0f, 1.0f);
+        state_.pressureRatio = ratio == 0.0f ? 0.0f : approach(state_.pressureRatio, ratio, dt);
         // Keep immediate stick-dependent restoring force on the Linux
         // constant-force fallback, using the same smoothed trim centers.
         state_.rollForce = target.rollForce + state_.roll - target.roll;

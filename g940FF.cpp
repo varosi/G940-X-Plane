@@ -16,7 +16,7 @@
 #endif
 
 namespace {
-XPLMDataRef rollRef, pitchRef, speedRef, vneRef, alphaRef, eTrimRef, aTrimRef, pausedRef;
+XPLMDataRef rollRef, pitchRef, pressureRef, alphaRef, eTrimRef, aTrimRef, pausedRef;
 bool enabled = false;
 bool forceReady = false;
 g940::ForceSmoother forceSmoother;
@@ -39,7 +39,7 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         const bool startingRelease = !forceSmoother.releasing();
 #endif
         const g940::ForceState state = forceSmoother.release(elapsed);
-        if (state.speedRatio <= 0.0f || state.effectScale <= 0.0f) {
+        if (state.pressureRatio <= 0.0f || state.effectScale <= 0.0f) {
             if (!g940::releaseForceFeedback()) {
                 reportError(); g940::closeForceFeedback();
             }
@@ -69,11 +69,12 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         XPLMDebugString("G940 FF: force-feedback device connected\n");
     }
     const float roll = XPLMGetDataf(rollRef), pitch = XPLMGetDataf(pitchRef);
-    const float speed = XPLMGetDataf(speedRef), vne = XPLMGetDataf(vneRef);
+    // Qstatic is dynamic pressure in pounds-force per square foot, not Pa.
+    const float pressurePa = XPLMGetDataf(pressureRef) * g940::pascalsPerPsf;
     const float alpha = XPLMGetDataf(alphaRef);
     const float elevatorTrim = XPLMGetDataf(eTrimRef), aileronTrim = XPLMGetDataf(aTrimRef);
     const g940::ForceState target = g940::calculateForce(
-        roll, pitch, speed, vne, alpha, elevatorTrim, aileronTrim);
+        roll, pitch, pressurePa, alpha, elevatorTrim, aileronTrim);
     if (startingForce) forceSmoother.reset(target);
     const g940::ForceState state = forceSmoother.update(target, elapsed);
 #ifdef G940_DEBUG_FORCE
@@ -81,13 +82,15 @@ float flightLoopCallback(float elapsed, float, int, void *) {
     if (now >= nextForceTrace) {
         char message[384];
         std::snprintf(message, sizeof(message),
-            "G940 FF trace: TAS=%.2f m/s Vne=%.2f kt ratio=%.3f "
+            "G940 FF trace: q=%.2f Pa ratio=%.3f "
             "yoke=(%.3f,%.3f) trim=(%.3f,%.3f) alpha=%.2f centers=(%.3f,%.3f) "
-            "spring=(%.3f,%.3f) scale=%.3f\n",
-            speed, vne, state.speedRatio, roll, pitch, aileronTrim, elevatorTrim,
+            "coeff=(%u,%u) spring=(%.3f,%.3f) scale=%.3f\n",
+            pressurePa, state.pressureRatio, roll, pitch, aileronTrim, elevatorTrim,
             alpha, state.roll, state.pitch,
-            g940::springSaturationRatio(state.speedRatio, 0) * state.effectScale,
-            g940::springSaturationRatio(state.speedRatio, 1) * state.effectScale,
+            g940::springCoefficient(state.pressureRatio * state.effectScale, 0),
+            g940::springCoefficient(state.pressureRatio * state.effectScale, 1),
+            g940::springSaturationRatio(state.pressureRatio, 0) * state.effectScale,
+            g940::springSaturationRatio(state.pressureRatio, 1) * state.effectScale,
             state.effectScale);
         XPLMDebugString(message);
         nextForceTrace = now + std::chrono::seconds(2);
@@ -108,8 +111,7 @@ PLUGIN_API int XPluginStart(char *outName, char *outSig, char *outDesc) {
     const Reference references[] = {
         {&rollRef, "sim/joystick/yoke_roll_ratio"},
         {&pitchRef, "sim/joystick/yoke_pitch_ratio"},
-        {&speedRef, "sim/flightmodel/position/true_airspeed"},
-        {&vneRef, "sim/aircraft/view/acf_Vne"},
+        {&pressureRef, "sim/flightmodel/misc/Qstatic"},
         {&alphaRef, "sim/flightmodel/position/alpha"},
         {&eTrimRef, "sim/flightmodel2/controls/elevator_trim"},
         {&aTrimRef, "sim/flightmodel2/controls/aileron_trim"},

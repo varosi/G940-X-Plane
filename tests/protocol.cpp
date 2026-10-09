@@ -16,9 +16,10 @@ int main() {
     assert(force[37] == 0xff && force[38] == 0x7f); // pitch center
     assert(force[13] == 0 && force[14] == 0x50); // intermediate roll saturation
     assert(force[43] == 0 && force[44] == 0x70); // reduced pitch saturation
-    const auto halfSpeed = forceReport({0, 0, .5});
-    assert(halfSpeed[13] == 0 && halfSpeed[14] == 0x32); // 62.5% of roll cap
-    assert(halfSpeed[43] == 0 && halfSpeed[44] == 0x62); // 87.5% of pitch cap
+    const auto halfPressure = forceReport({0, 0, .5});
+    assert(halfPressure[11] == 40 && halfPressure[41] == 56); // stiffness varies too
+    assert(halfPressure[13] == 0 && halfPressure[14] == 0x32); // 62.5% of roll cap
+    assert(halfPressure[43] == 0 && halfPressure[44] == 0x62); // 87.5% of pitch cap
     assert(springSaturationRatio(.9, 1) == 1); // strength never exceeds the device limit
     for (unsigned axis = 0; axis < 2; ++axis) {
         assert(force[1 + 30 * axis + 10] == (axis == 0 ? 80 : 112));
@@ -31,26 +32,62 @@ int main() {
     for (unsigned i = 1; i < stop.size(); ++i) assert(stop[i] == 0);
     assert(forceReport({.5, -.5, 1, 0, 0, 0}) == stop);
     const auto halfEffect = forceReport({0, 0, .5, 0, 0, .5});
-    assert(halfEffect[11] == 40 && halfEffect[41] == 56); // stiffness fades too
-    assert(halfEffect[43] == 0 && halfEffect[44] == 0x31); // half of pitch cap at half speed
-    const auto stationary = calculateForce(0, 0, 0, 100, 0, 0, 0);
-    assert(stationary.speedRatio == minimumForceRatio);
-    const auto taxi = calculateForce(.2, -.2, .68, 187, -121, .2, .1);
-    assert(taxi.speedRatio == minimumForceRatio && taxi.roll == 0 && taxi.pitch == 0);
-    assert(taxi.rollForce < 0 && taxi.pitchForce > 0); // mechanical restoring force
-    const auto taxiReport = forceReport(taxi);
-    assert(taxiReport[14] != 0 && taxiReport[44] != 0);
-    const auto blended = calculateForce(0, 0, 10, 187, 5, .2, .1);
-    assert(std::abs(blended.roll - .15) < 1e-6);
-    assert(std::abs(blended.pitch - .075) < 1e-6);
-    assert(calculateForce(0, 0, 100, 0, 0, 0, 0).speedRatio == 0);
-    assert(calculateForce(0, 0, -100, 100, 0, 0, 0).speedRatio == 0);
-    assert(calculateForce(0, 0, 1000, 100, 0, 0, 0).speedRatio == 1);
+    assert(halfEffect[11] == 20 && halfEffect[41] == 28); // stiffness fades too
+    assert(halfEffect[43] == 0 && halfEffect[44] == 0x31);
+    const float referencePressure = tb10tb20Profile.referencePressurePa;
+    assert(referencePressure > 2530 && referencePressure < 2540); // 125 KEAS, Pa
+    const auto stationary = calculateForce(.2, -.2, 0, -121, .2, .1);
+    assert(stationary.pressureRatio == minimumForceRatio);
+    assert(stationary.roll == 0 && stationary.pitch == 0); // ground AoA/trim cannot pull
+    assert(stationary.rollForce < 0 && stationary.pitchForce > 0);
+    const auto groundReport = forceReport(stationary);
+    assert(groundReport[11] == 16 && groundReport[41] == 22);
+    assert(groundReport[14] != 0 && groundReport[44] != 0);
+    const auto taxi = calculateForce(0, 0, 1, -121, .2, .1);
+    assert(taxi.pressureRatio > minimumForceRatio && taxi.pitch < .01);
+    const auto blended = calculateForce(0, 0, referencePressure / 2, 5, .2, .1);
+    assert(std::abs(blended.pressureRatio - .6) < 1e-6);
+    assert(std::abs(blended.roll - .2) < 1e-6);
+    assert(std::abs(blended.pitch - .1) < 1e-6);
+
+    // q = rho*V^2/2: doubling airflow quadruples aerodynamic stiffness;
+    // halving density halves it. The mechanical component remains at zero q.
+    const float slowSpeed = 62.5f * knotsToMps;
+    const float slowQ = .5f * seaLevelDensity * slowSpeed * slowSpeed;
+    const auto slow = calculateForce(0, 0, slowQ, 0, 0, 0);
+    const auto fast = calculateForce(0, 0, 4 * slowQ, 0, 0, 0);
+    const auto thinAir = calculateForce(0, 0, 2 * slowQ, 0, 0, 0);
+    assert(std::abs(slow.pressureRatio - .4) < 1e-6);
+    assert(std::abs(fast.pressureRatio - 1) < 1e-6);
+    assert(std::abs(thinAir.pressureRatio - .6) < 1e-6);
+    const auto slowReport = forceReport(slow), fastReport = forceReport(fast);
+    assert(slowReport[11] < fastReport[11] && slowReport[41] < fastReport[41]);
+    assert(slowReport[14] < fastReport[14] && slowReport[44] < fastReport[44]);
+    assert(calculateForce(0, 0, 100 * referencePressure, 0, 0, 0).pressureRatio == 1);
+    auto profile = tb10tb20Profile;
+    profile.referencePressurePa *= 2;
+    assert(std::abs(calculateForce(0, 0, referencePressure, 0, 0, 0, profile).pressureRatio - .6) < 1e-6);
+    profile.referencePressurePa = 0;
+    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).pressureRatio == 0);
+    profile = tb10tb20Profile;
+    profile.mechanicalRatio = -1;
+    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).pressureRatio == 0);
+    profile.mechanicalRatio = 2;
+    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).pressureRatio == 0);
     const float nan = std::numeric_limits<float>::quiet_NaN();
     const float infinity = std::numeric_limits<float>::infinity();
-    assert(calculateForce(0, 0, nan, 100, 0, 0, 0).speedRatio == 0);
-    assert(calculateForce(0, 0, infinity, 100, 0, 0, 0).speedRatio == 0);
-    assert(calculateForce(0, 0, 10, infinity, 0, 0, 0).speedRatio == 0);
+    assert(calculateForce(0, 0, -1, 0, 0, 0).pressureRatio == 0);
+    assert(calculateForce(0, 0, nan, 0, 0, 0).pressureRatio == 0);
+    assert(calculateForce(0, 0, infinity, 0, 0, 0).pressureRatio == 0);
+    assert(calculateForce(0, 0, 100, infinity, 0, 0).pressureRatio == 0);
+    assert(calculateForce(nan, 0, 100, 0, 0, 0).pressureRatio == 0);
+    assert(calculateForce(0, 0, 100, 0, infinity, 0).pressureRatio == 0);
+    profile = tb10tb20Profile;
+    profile.pitchTrimGain = nan;
+    assert(calculateForce(0, 0, 100, 0, 0, 0, profile).pressureRatio == 0);
+    profile = tb10tb20Profile;
+    profile.referencePressurePa = .00001f;
+    assert(calculateForce(0, 0, std::numeric_limits<float>::max(), 0, 0, 0, profile).pressureRatio == 1);
     const auto invalid = forceReport({nan, nan, nan});
     assert(invalid[7] == 0 && invalid[37] == 0 && invalid[13] == 0);
     assert(forceReport({0, 0, 1, 0, 0, nan}) == stop);
@@ -81,13 +118,23 @@ int main() {
 
     // Stick motion must not move the spring's trim target along with the
     // physical stick: doing so creates feedback around a moving neutral point.
-    const auto trimTarget = calculateForce(0, 0, 25.722222, 100, 0, .5, .1);
-    const auto displaced = calculateForce(.5, .5, 25.722222, 100, 0, .5, .1);
+    const auto trimTarget = calculateForce(0, 0, referencePressure / 2, 0, .5, .1);
+    const auto displaced = calculateForce(.5, .5, referencePressure / 2, 0, .5, .1);
     assert(trimTarget.roll == displaced.roll && trimTarget.pitch == displaced.pitch);
     assert(trimTarget.rollForce > displaced.rollForce);
     assert(trimTarget.pitchForce > displaced.pitchForce);
-    assert(displaced.pitchForce == 0); // held at the pitch trim target
-    const auto untrimmed = calculateForce(0, .5, 25.722222, 100, 0, 0, 0);
+    assert(std::abs(displaced.pitchForce) < 1e-6); // held at the pitch trim target
+    const auto balanced = calculateForce(trimTarget.roll, trimTarget.pitch,
+        referencePressure / 2, 0, .5, .1);
+    const auto balancedConstant = constantForceComponents(balanced);
+    assert(balancedConstant[0] == 0 && balancedConstant[1] == 0);
+    const auto aboveCenter = calculateForce(trimTarget.roll + .05f, trimTarget.pitch + .05f,
+        referencePressure / 2, 0, .5, .1);
+    const auto belowCenter = calculateForce(trimTarget.roll - .05f, trimTarget.pitch - .05f,
+        referencePressure / 2, 0, .5, .1);
+    assert(aboveCenter.rollForce < 0 && aboveCenter.pitchForce < 0);
+    assert(belowCenter.rollForce > 0 && belowCenter.pitchForce > 0);
+    const auto untrimmed = calculateForce(0, .5, referencePressure / 2, 0, 0, 0);
     assert(untrimmed.pitchForce < displaced.pitchForce);
 
     ForceSmoother smoother;
@@ -96,24 +143,24 @@ int main() {
         const auto next = smoother.update(trimTarget, .02);
         assert(next.pitch >= previous.pitch);
         assert(next.pitch - previous.pitch <= .005001);
-        assert(next.speedRatio - previous.speedRatio <= .020001);
+        assert(next.pressureRatio - previous.pressureRatio <= .020001);
         previous = next;
     }
     assert(std::abs(previous.pitch - trimTarget.pitch) < 1e-4);
-    assert(std::abs(previous.speedRatio - trimTarget.speedRatio) < 1e-6);
-    const auto reverseTrim = calculateForce(0, 0, 25.722222, 100, 0, -.5, -.1);
+    assert(std::abs(previous.pressureRatio - trimTarget.pressureRatio) < 1e-6);
+    const auto reverseTrim = calculateForce(0, 0, referencePressure / 2, 0, -.5, -.1);
     const auto afterLongFrame = smoother.update(reverseTrim, 100);
     assert(previous.pitch - afterLongFrame.pitch <= .025001);
-    const auto invalidVne = calculateForce(0, 0, 10, 0, 0, 0, 0);
-    const auto invalidState = smoother.update(invalidVne, .02);
-    assert(invalidState.speedRatio == 0); // invalid data stops immediately, even during a ramp
+    const auto invalidPressure = calculateForce(0, 0, -1, 0, 0, 0);
+    const auto invalidState = smoother.update(invalidPressure, .02);
+    assert(invalidState.pressureRatio == 0); // invalid data stops immediately, even during a ramp
     smoother.reset();
     const auto restarted = smoother.update(trimTarget, .02);
-    assert(restarted.pitch <= .005001 && restarted.speedRatio <= .020001);
+    assert(restarted.pitch <= .005001 && restarted.pressureRatio <= .020001);
     smoother.reset(trimTarget);
     const auto primed = smoother.update(trimTarget, .02f);
     assert(primed.pitch == trimTarget.pitch && primed.roll == trimTarget.roll);
-    assert(primed.speedRatio <= .020001f && primed.effectScale <= .020001f);
+    assert(primed.pressureRatio <= .020001f && primed.effectScale <= .020001f);
     assert(std::abs(primed.pitchForce - trimTarget.pitchForce) < 1e-6f);
 
     // Small trim steps must be filtered as well as large changes: the old
@@ -128,7 +175,7 @@ int main() {
     assert(std::abs(settled.pitch - smallTarget.pitch) < 1e-5);
     assert(settled.pitch <= smallTarget.pitch); // no overshoot
 
-    double lastScale = 1.0;
+    float lastScale = 1.0f;
     for (int i = 0; i < 25; ++i) {
         settled = smallTrim.release(.02);
         assert(settled.effectScale <= lastScale && settled.effectScale >= 0);
@@ -144,5 +191,5 @@ int main() {
     assert(stopped.effectScale == 0 && forceReport(stopped) == stop);
     smallTrim.reset();
     assert(!smallTrim.releasing());
-    std::puts("Force packets, stable trim targets, and bounded transitions passed.");
+    std::puts("Force packets, pressure-dependent stiffness, trim equilibrium and transitions passed.");
 }

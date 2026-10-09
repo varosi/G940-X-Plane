@@ -33,21 +33,46 @@ Each output axis uses these offsets, excluding its report ID:
 | 24 | 2 | Signed little-endian velocity damping saturation |
 
 Equal boundaries define the spring center without deadband. Native centers
-span ±32767; roll/pitch coefficients are 80/112 and caps 20480/28672.
-Damping uses coefficient 8 and saturation 4096 × airspeed ratio. Unused fields
+span ±32767; maximum roll/pitch coefficients are 80/112 and caps 20480/28672.
+Damping uses coefficient 8 and saturation 4096 × pressure strength. Unused fields
 remain zero; a zero-filled report with ID 2 stops live force. Linux evdev
 coefficients are shifted by eight bits and saturation uses twice the native
 cap. Its constant-force fallback supplies stick-dependent restoring force,
-with the same smoothed centers, gains and per-axis caps.
+with the same smoothed equilibrium, pressure strength and per-axis caps.
 
 ## Model and lifecycle
 
-Calculations use `float`. Finite nonnegative true airspeed and positive finite
-Vne give a base ratio `max(0.2, min(TAS / (Vne × 0.51444444), 1))`; invalid data
-stops force. Axis saturation gains are coefficient/64, capped at 1. Roll center
-is aileron trim ×3; pitch center is `(elevator trim − AoA/50) ×1.5`, clamped
-within ±1. Below 5 m/s centers are zero, blending into these aerodynamic targets
-with cubic smoothstep between 5 and 15 m/s. Stick movement does not change them.
+Calculations use `float`. The experimental `feature/realism` model reads ambient
+dynamic pressure from `sim/flightmodel/misc/Qstatic` in psf and converts it to Pa
+with factor 47.88026. This already accounts for air density and airflow through
+`q = rho × V² / 2`; it replaces the earlier TAS/Vne strength estimate. Negative
+or nonfinite pressure, nonfinite control/trim/AoA data or an invalid profile
+stops force immediately. Zero pressure is valid and retains mechanical load.
+
+The initial [TB10/TB20 profile](../g940ForceModel.h) has reference pressure about
+2533 Pa (125 knots equivalent airspeed), mechanical ratio `m = 0.2`, roll trim
+gain 3, pitch trim gain 1.5, AoA gain 0.03/degree and neutral AoA zero. It is the
+default profile for every loaded aircraft in this experimental branch; aircraft
+detection and other aircraft profiles are not implemented. These are starting
+gains, not measured hinge moments or grip forces.
+
+Aerodynamic stiffness is `a = (1 − m) × clamp(q / qref, 0, 1)` and total
+strength is `s = m + a`. Roll/pitch coefficients are `round(80 × s)` and
+`round(112 × s)`. Each axis cap is its configured maximum times
+`clamp(s × maximumCoefficient / 64, 0, 1)`, so caps can reach their limits before
+stiffness reaches its maximum. Neither coefficient nor cap exceeds the preceding
+flight-tested maximum. This gives a gentle spring at rest and increasing stiffness
+as well as increasing caps with aerodynamic load.
+
+Mechanical resistance is centered at zero; the aerodynamic spring is centered
+at aileron trim ×3 for roll and elevator trim ×1.5 − AoA ×0.03 for pitch. Balance
+these springs at equilibrium `a / s × aerodynamicCenter`, clamped within ±1.
+At zero pressure the equilibrium is zero even with arbitrary ground AoA/trim.
+Stick movement does not change this equilibrium. The Linux constant-force
+fallback uses equilibrium minus stick position on each axis, fixing the earlier
+extra stick gain that gave it a different zero-force position from native springs.
+Whole-aircraft AoA is still an approximation; local tail airflow, hinge geometry,
+propwash and flap effects await further modeling and physical calibration.
 
 Roll centers slew at 0.5 normalized units/s; pitch combines a 250 ms exponential
 filter and 0.25/s limit. Strength ramps at 1/s. Callback intervals are capped
@@ -76,6 +101,7 @@ cause remains unisolated; see [hardware findings](HARDWARE_TESTS.md).
 `make probe` only reads LED state and grip. Optional LED/spring/constant-force
 comparisons require preparation, electronically verify grip coverage, stop
 on grip release/interruption and restore LEDs or send zero force. The spring
-probe uses 10% of configured caps; constant force defaults to 4000/32767 and
+probe retains the full configured stiffness with 10% of configured caps;
+constant force defaults to 4000/32767 and
 accepts `--magnitude 1..16384`. Keep X-Plane closed and distinguish firmware
 hands-off resistance from live force. Commands are in [README.md](../README.md#test-and-diagnose).

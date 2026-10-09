@@ -150,9 +150,10 @@ bool updateForceFeedback(const ForceState& state) {
         for (unsigned axis = 0; axis < 2; ++axis) {
             auto& condition = effect.u.condition[axis];
             condition.center = clamp(centers[axis], -1.0f, 1.0f) * 0x7fff;
-            condition.left_coeff = condition.right_coeff = (springCoefficients[axis] << 8) * scale;
+            condition.left_coeff = condition.right_coeff =
+                springCoefficient(state.pressureRatio * scale, axis) << 8;
             condition.left_saturation = condition.right_saturation =
-                springSaturationRatio(state.speedRatio, axis) * (2 * springMaximums[axis]) * scale;
+                springSaturationRatio(state.pressureRatio, axis) * (2 * springMaximums[axis]) * scale;
         }
     } else {
         const auto components = constantForceComponents(state);
@@ -169,7 +170,7 @@ bool updateForceFeedback(const ForceState& state) {
     lastError = updateError;
 #else
     bool success;
-    if (state.speedRatio <= 0.0f || !std::isfinite(state.speedRatio) ||
+    if (state.pressureRatio <= 0.0f || !std::isfinite(state.pressureRatio) ||
         clamp(state.effectScale, 0.0f, 1.0f) == 0.0f) {
         success = releaseForceFeedback();
     } else {

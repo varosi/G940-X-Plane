@@ -1,7 +1,7 @@
 # G940-X-Plane
 
 Two X-Plane 11.20+/12 plugins for Logitech Flight System G940: **g940FF**
-provides airspeed-dependent force feedback with trim and angle-of-attack spring
+provides dynamic-pressure-dependent force feedback with trim and angle-of-attack spring
 centers; **g940LEDs** displays aircraft state on the eight throttle button LEDs.
 
 | Platform | Architecture | Force feedback | LEDs |
@@ -10,12 +10,14 @@ centers; **g940LEDs** displays aircraft state on the eight throttle button LEDs.
 | Windows | x86-64 | Native G940 HID | Native G940 HID |
 | macOS 11+ | Intel/Apple Silicon universal | Native G940 HID | Native G940 HID |
 
-Both plugins build on all three platforms. macOS hardware and X-Plane 12 flight
-operation are confirmed; Windows/Linux hardware validation remains pending.
-Trim changes and the one-second pause release are smooth. Matched hands-off
-centering holds the trimmed stick position; the latest flight still reported
-some early grip-release kicks near center, disappearing later. The force model
-remains a work in progress. See [hardware findings](tools/HARDWARE_TESTS.md)
+Both plugins build on all three platforms. The preceding `feature/mac` model
+operated on macOS in X-Plane 12; Windows/Linux hardware validation remains pending.
+This experimental `feature/realism` model targets the tested TB10/TB20 and needs
+flight validation. Spring stiffness and caps grow with dynamic pressure, with
+gentle mechanical resistance at rest and a pressure-weighted trim equilibrium.
+The existing trim filtering, one-second pause fade and matching hands-off
+profiles are retained. Early near-center grip-release kicks reported with the
+preceding model remain unresolved. See [hardware findings](tools/HARDWARE_TESTS.md)
 and the [report protocol](tools/PROTOCOL.md).
 
 ## Build
@@ -108,7 +110,7 @@ feedback needs read/write access to `/dev/input/event*`; LEDs need the original
 
 ## Test and diagnose
 
-`make test` checks packet encoding, trim filtering, invalid inputs, pause fades,
+`make test` checks pressure scaling, trim equilibrium, packet encoding, filtering, invalid inputs, pause fades,
 dataref types, lifecycle/reconnection, native backup/rollback/restoration and
 installation without moving hardware. Only the test runners keep assertions
 enabled when testing release builds. CI runs these checks and validates the
@@ -126,7 +128,7 @@ make BUILD_TYPE=debug BUILDDIR=build/force-debug CPPFLAGS=-DG940_DEBUG_FORCE=1
 make install BUILD_TYPE=debug BUILDDIR=build/force-debug CPPFLAGS=-DG940_DEBUG_FORCE=1 XP_INSTALL_PATH="/path/to/X-Plane 12"
 ```
 
-Traces include airspeed/Vne, yoke inputs, trim, AoA, centers, saturation and
+Traces include dynamic pressure in Pa, yoke inputs, trim, AoA, centers, spring coefficients, saturation and
 pause scale. Installing the ordinary `build` output removes diagnostic logging.
 
 With X-Plane closed, `make probe` on macOS/Windows only reads hardware. Optional
@@ -149,7 +151,7 @@ and restore their original state. Never test forces without a preparation warnin
 
 The fixed LED mapping is P1/P5 speed brakes, P2/P6 flaps, P3 carburetor heat,
 P4 autopilot, P7 landing lights, P8 gear; absent equipment shows off. Force is
-centered gently on the ground, ramps with airspeed, fades on pause in both
+centered gently at zero dynamic pressure, ramps with aerodynamic load, fades on pause in both
 native grip modes and restores original idle settings on normal disable/exit.
-Invalid airspeed or Vne stops immediately. For load/access failures inspect
+Invalid pressure, control or trim data stops immediately. For load/access failures inspect
 `Log.txt`; `lipo -archs build/g940FF/64/mac.xpl` checks Mac architectures.
