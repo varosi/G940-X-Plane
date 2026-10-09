@@ -20,6 +20,11 @@ def package(build_dir, platform, output):
                           "merging folders and replacing only the matching .xpl files.\n"
                           "Keep your existing g940FF/aircraft.ini when upgrading.\n"
                           "New installations include General and Socata TB10/TB20 presets.\n"
+                          "For X-Plane 12 control loading, export the G940's .joy defaults,\n"
+                          "then close X-Plane and add ffb to the pitch/roll axis assignments.\n"
+                          "Keep their existing numbers and reverse flags, then restart and\n"
+                          "apply Reset to Defaults for the G940. Back up the .joy file first.\n"
+                          "Details: https://developer.x-plane.com/article/types-of-flight-control-trim/\n"
                           "Start X-Plane and check Log.txt for g940FF and g940LEDs.\n"
                           "Linux requires writable evdev devices and a G940 LED sysfs driver.\n"
                           "See https://github.com/chrisboyle/G940-X-Plane for documentation.\n")

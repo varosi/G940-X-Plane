@@ -64,6 +64,12 @@ int main() {
     assert(slowReport[11] < fastReport[11] && slowReport[41] < fastReport[41]);
     assert(slowReport[14] < fastReport[14] && slowReport[44] < fastReport[44]);
     assert(calculateForce(0, 0, 100 * referencePressure, 0, 0, 0).pressureRatio == 1);
+    // Capping motor strength must not freeze the trim force balance at qref.
+    const auto referenceTrim = calculateForce(0, 0, referencePressure, 0, .5f, 0);
+    const auto highSpeedTrim = calculateForce(0, 0, 2 * referencePressure, 0, .5f, 0);
+    assert(referenceTrim.pressureRatio == 1 && highSpeedTrim.pressureRatio == 1);
+    assert(std::abs(referenceTrim.pitch - .4f) < 1e-6f);
+    assert(std::abs(highSpeedTrim.pitch - (4.0f / 9.0f)) < 1e-6f);
     auto profile = defaultProfile;
     profile.referencePressurePa *= 2;
     assert(std::abs(calculateForce(0, 0, referencePressure, 0, 0, 0, profile).pressureRatio - .6) < 1e-6);
@@ -136,6 +142,44 @@ int main() {
     assert(belowCenter.rollForce > 0 && belowCenter.pitchForce > 0);
     const auto untrimmed = calculateForce(0, .5, referencePressure / 2, 0, 0, 0);
     assert(untrimmed.pitchForce < displaced.pitchForce);
+
+    // Solve the hinge-load surrogate in degrees, then convert through the
+    // appropriate up/down travel. Opposing trim and AoA can cross zero.
+    profile = defaultProfile;
+    profile.elevatorUpDegrees = 30;
+    profile.elevatorDownDegrees = 15;
+    profile.pitchAoADeflectionGain = .5f;
+    profile.staticPitchTrim = .1f;
+    const float q = referencePressure / 2;
+    const auto asymmetric = calculateForce(0, 0, q, 6, .2f, 0, profile);
+    assert(std::abs(asymmetric.pitch - (2.0f / 15.0f)) < 1e-6f); // (6+3-3)*2/3 / 30
+    const auto negative = calculateForce(0, 0, q, 6, -.2f, 0, profile);
+    assert(std::abs(negative.pitch + (2.0f / 15.0f)) < 1e-6f); // (-3+3-3)*2/3 / 15
+    const auto relieved = calculateForce(0, asymmetric.pitch, q, 6, .2f, 0, profile);
+    assert(std::abs(relieved.pitchForce) < 1e-6f);
+    assert(std::abs(constantForceComponents(relieved)[1]) < 1e-6f);
+    assert(calculateForce(0, asymmetric.pitch + .1f, q, 6, .2f, 0, profile).pitchForce < 0);
+    assert(calculateForce(0, asymmetric.pitch - .1f, q, 6, .2f, 0, profile).pitchForce > 0);
+    assert(calculateForce(0, -.8f, q, 6, .2f, 0, profile).pitch == asymmetric.pitch);
+    assert(calculateForce(0, 0, 0, 6, .2f, 0, profile).pitch == 0);
+    const auto pressureBeforeTrim = calculateForce(0, .2f, q, 6, 0, 0, profile);
+    const auto pressureAfterTrim = calculateForce(0, .2f, q, 6, .3f, 0, profile);
+    assert(pressureBeforeTrim.pitchForce < -.19f); // holding the same control position
+    assert(std::abs(pressureAfterTrim.pitchForce) < 1e-6f); // trim cancels steady load
+    assert(std::abs(constantForceComponents(pressureAfterTrim)[1]) < 1e-6f);
+    profile.pitchTrimMode = PitchTrimMode::spring;
+    assert(std::abs(calculateForce(0, 0, 0, 6, .2f, 0, profile).pitch - .2f) < 1e-6f);
+    profile.pitchTrimMode = PitchTrimMode::stabilizer;
+    // Elevator trim input must not be counted again for a THS. Incidence
+    // affects aerodynamic loading, but cannot move the center at zero q.
+    const auto ths = calculateForce(0, 0, q, 0, 1, 0, profile, 6);
+    assert(std::abs(ths.pitch) < 1e-6f); // static 3 degrees balances incidence load
+    assert(calculateForce(0, 0, q, 0, -1, 0, profile, 6).pitch == ths.pitch);
+    assert(calculateForce(0, 0, q, 0, 0, 0, profile, 9).pitch < 0);
+    assert(calculateForce(0, 0, 0, 0, 1, 0, profile, 9).pitch == 0);
+    assert(calculateForce(0, 0, q, 0, 0, 0, profile, nan).pressureRatio == 0);
+    profile.elevatorDownDegrees = 0;
+    assert(calculateForce(0, 0, q, 0, 0, 0, profile).pressureRatio == 0);
 
     ForceSmoother smoother;
     ForceState previous;

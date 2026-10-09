@@ -66,8 +66,19 @@ Aircraft configuration now supplies General and Socata presets, selected by
 ICAO or filename. Socata retains its initial gains; General uses normalized
 trim gains of 1 and X-Plane Vne as a provisional pressure-scaling reference.
 
+The trim-equilibrium revision separates aerodynamic, spring and stabilizer
+trim, combines pitch loads in degrees using X-Plane elevator travel/static
+tab metadata, and keeps the force balance responsive above the capped motor
+reference speed. The installed Socata model declares ±15-degree elevator
+travel, a +0.1 static tab ratio and zero stabilizer trim travel. It therefore
+uses the aerodynamic preset; these values are metadata, not force calibration.
+A read-only check found all saved `_joy_ffb_axis*` flags zero. X-Plane 12's
+documented control-loaded `.joy` setting is required to prevent simultaneous
+simulator/plugin trim-center offsets. No joystick preferences were changed.
+
 Software tests cover the pressure units, speed-squared/density scaling, ground
 baseline, increasing stiffness/caps, bounded maximums, trim equilibrium and
+asymmetric travel, static bias, trim-type behavior, steady out-of-trim pressure,
 profile parsing/selection/reload, metadata fallback, installation preserving
 user settings, and existing lifecycle/rollback behavior. No new motor or flight test has run for
 this model; preceding flight observations do not validate it. The initial 125

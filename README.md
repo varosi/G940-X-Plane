@@ -130,10 +130,23 @@ keeps the initial adjustable 125-knot reference. Missing/invalid Vne uses
 `fallback_reference_speed_knots`. This does not provide realistic jet artificial
 feel without further aircraft-specific modeling and calibration.
 
+The pitch equilibrium uses elevator up/down travel and static trim-tab bias
+from X-Plane, with configurable overrides and 15-degree/zero-bias fallbacks.
+`pitch_trim_mode = auto` recognizes stabilizer trim from its available travel;
+otherwise it uses aerodynamic trim. Set `spring` explicitly for mechanical
+spring trim. Aerodynamic trim loses its influence at rest, spring trim still
+moves the center, and stabilizer trim changes the airflow load without adding
+an elevator trim offset again. These are approximations requiring flight tuning.
+
 Mechanical resistance, trim gains, pitch AoA gain and neutral AoA are configured
-because X-Plane does not supply the corresponding G940 force calibration.
+because aircraft metadata does not provide the corresponding G940 calibration.
 General trim gains are 1 because the simulator's live trim values already
 represent fractions of control deflection; Socata retains gains 3/1.5.
+`pitch_aoa_deflection_gain` specifies degrees of free elevator per degree of
+AoA; combining trim and airflow in degrees accounts for asymmetric elevator
+travel. The old `pitch_aoa_gain` key remains supported at its original
+15-degree reference travel. Motor strength stays capped, while equilibrium
+continues balancing aerodynamic and mechanical loads above the reference speed.
 For example, change `reference_speed_knots = 150` in the Socata section to reach
 maximum stiffness at 150 KEAS, or change `pitch_trim_gain` to adjust trim pressure.
 The existing motor coefficient and force ceilings still bound every profile.
@@ -144,6 +157,26 @@ Admin. `Log.txt` shows the selected profile and reference source. A missing file
 uses General defaults. Malformed, duplicate, unknown or out-of-range settings
 prevent enabling force feedback and report the offending setting in the log.
 Numeric ranges are documented in the [protocol](tools/PROTOCOL.md#aircraft-configuration).
+
+### X-Plane 12 control-loaded axes
+
+For correct hands-off trim, mark the G940 pitch and roll axes `ffb` in their
+`.joy` definition. Otherwise X-Plane applies its own trim-center offset as well
+as the plugin moving the stick. Follow [X-Plane's control-loading instructions](https://developer.x-plane.com/article/types-of-flight-control-trim/):
+
+1. Save your current G940 assignments as a default `.joy` file using
+   **Settings > Joystick > Save as Default for [device]**, then close X-Plane.
+2. Back up that file and add `ffb` to the existing `joy_use_ptch` and
+   `joy_use_roll` assignment lines, preserving their axis numbers and any
+   `reverse` keyword. For example, `Axis 1: joy_use_ptch reverse ffb`.
+3. Keep the file under `Resources/joystick configs/`, restart X-Plane and
+   apply **Reset to Defaults for [device]**. Keep your saved assignments/backup
+   for returning to use without control loading.
+
+Axis numbers differ between OSes; export on each target rather than copying a
+Windows mapping to Mac/Linux. The plugin does not edit joystick preferences
+or override simulator control surfaces. The [official .joy specification](https://developer.x-plane.com/article/creating-joystick-configuration-joy-files/)
+describes exporting and applying defaults.
 
 ## Test and diagnose
 

@@ -6,6 +6,7 @@
 #include <iterator>
 #include <locale>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -19,6 +20,14 @@ struct ConfigProfile {
     float referenceKnots = 0.0f;
     float fallbackKnots = 125.0f;
     AircraftProfile force;
+    std::optional<PitchTrimMode> pitchTrimMode;
+    std::optional<float> elevatorUpDegrees, elevatorDownDegrees, staticPitchTrim;
+};
+
+struct AircraftGeometry {
+    float elevatorUpDegrees = 0.0f, elevatorDownDegrees = 0.0f;
+    float staticPitchTrim = 0.0f;
+    float stabilizerUpDegrees = 0.0f, stabilizerDownDegrees = 0.0f;
 };
 
 inline std::string trimConfigText(const std::string& text) {
@@ -94,7 +103,7 @@ inline std::vector<ConfigProfile> readAircraftConfig(std::istream& input) {
             {"mechanical_ratio", &AircraftProfile::mechanicalRatio, .001f, 1.0f},
             {"roll_trim_gain", &AircraftProfile::rollTrimGain, -10.0f, 10.0f},
             {"pitch_trim_gain", &AircraftProfile::pitchTrimGain, -10.0f, 10.0f},
-            {"pitch_aoa_gain", &AircraftProfile::pitchAoAGain, -1.0f, 1.0f},
+            {"pitch_aoa_deflection_gain", &AircraftProfile::pitchAoADeflectionGain, -15.0f, 15.0f},
             {"neutral_aoa_degrees", &AircraftProfile::neutralAoADegrees, -90.0f, 90.0f}
         };
         for (const auto& entry : section.settings) {
@@ -107,7 +116,25 @@ inline std::vector<ConfigProfile> readAircraftConfig(std::istream& input) {
                 else if (key == "reference_speed_knots")
                     profile.referenceKnots = lowerConfigText(value) == "auto" ? 0.0f : configNumber(value, 1, 1000);
                 else if (key == "fallback_reference_speed_knots") profile.fallbackKnots = configNumber(value, 1, 1000);
-                else {
+                else if (key == "pitch_trim_mode") {
+                    const auto mode = lowerConfigText(value);
+                    if (mode == "auto") profile.pitchTrimMode.reset();
+                    else if (mode == "aerodynamic") profile.pitchTrimMode = PitchTrimMode::aerodynamic;
+                    else if (mode == "spring") profile.pitchTrimMode = PitchTrimMode::spring;
+                    else if (mode == "stabilizer") profile.pitchTrimMode = PitchTrimMode::stabilizer;
+                    else throw std::runtime_error("expected auto, aerodynamic, spring or stabilizer");
+                } else if (key == "elevator_up_degrees" || key == "elevator_down_degrees" || key == "static_pitch_trim") {
+                    auto& target = key == "elevator_up_degrees" ? profile.elevatorUpDegrees :
+                        key == "elevator_down_degrees" ? profile.elevatorDownDegrees : profile.staticPitchTrim;
+                    if (lowerConfigText(value) == "auto") target.reset();
+                    else target = key == "static_pitch_trim" ? configNumber(value, -1, 1) : configNumber(value, .1f, 90);
+                } else if (key == "pitch_aoa_gain") {
+                    // Older configurations expressed this in normalized units
+                    // at the original 15-degree fallback elevator travel.
+                    if (section.settings.count("pitch_aoa_deflection_gain"))
+                        throw std::runtime_error("use only one pitch AoA gain setting per section");
+                    profile.force.pitchAoADeflectionGain = configNumber(value, -1, 1) * fallbackElevatorDegrees;
+                } else {
                     const auto field = std::find_if(std::begin(fields), std::end(fields), [&](const auto& f) { return key == f.key; });
                     if (field == std::end(fields)) throw std::runtime_error("unknown key: " + key);
                     profile.force.*(field->member) = configNumber(value, field->low, field->high);
@@ -158,10 +185,26 @@ inline float referenceSpeed(const ConfigProfile& profile, float vneKnots) {
     if (profile.referenceKnots > 0) return profile.referenceKnots;
     return std::isfinite(vneKnots) && vneKnots >= 1 && vneKnots <= 1000 ? vneKnots : profile.fallbackKnots;
 }
-inline AircraftProfile resolveAircraftProfile(const ConfigProfile& profile, float vneKnots) {
+inline AircraftProfile resolveAircraftProfile(const ConfigProfile& profile, float vneKnots,
+                                              const AircraftGeometry& geometry = {}) {
     auto force = profile.force;
     const float speed = referenceSpeed(profile, vneKnots) * knotsToMps;
     force.referencePressurePa = 0.5f * seaLevelDensity * speed * speed;
+    const auto travel = [](float value, float fallback) {
+        return std::isfinite(value) && value >= .1f && value <= 90.0f ? value : fallback;
+    };
+    force.elevatorUpDegrees = profile.elevatorUpDegrees.value_or(travel(geometry.elevatorUpDegrees, force.elevatorUpDegrees));
+    force.elevatorDownDegrees = profile.elevatorDownDegrees.value_or(travel(geometry.elevatorDownDegrees, force.elevatorDownDegrees));
+    force.staticPitchTrim = profile.staticPitchTrim.value_or(
+        std::isfinite(geometry.staticPitchTrim) && std::abs(geometry.staticPitchTrim) <= 1.0f ?
+        geometry.staticPitchTrim : force.staticPitchTrim);
+    const bool stabilizer = std::isfinite(geometry.stabilizerUpDegrees) && std::isfinite(geometry.stabilizerDownDegrees) &&
+        geometry.stabilizerUpDegrees >= 0.0f && geometry.stabilizerDownDegrees >= 0.0f &&
+        geometry.stabilizerUpDegrees <= 90.0f && geometry.stabilizerDownDegrees <= 90.0f &&
+        (geometry.stabilizerUpDegrees > 0.0f || geometry.stabilizerDownDegrees > 0.0f);
+    // X-Plane exposes THS travel; reversible spring trim needs an explicit
+    // preset because its trim-type flag has no documented dataref.
+    force.pitchTrimMode = profile.pitchTrimMode.value_or(stabilizer ? PitchTrimMode::stabilizer : PitchTrimMode::aerodynamic);
     return force;
 }
 }

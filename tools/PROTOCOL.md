@@ -51,7 +51,7 @@ stops force immediately. Zero pressure is valid and retains mechanical load.
 
 The initial [TB10/TB20 profile](../aircraft.ini) has reference pressure about
 2533 Pa (125 knots equivalent airspeed), mechanical ratio `m = 0.2`, roll trim
-gain 3, pitch trim gain 1.5, AoA gain 0.03/degree and neutral AoA zero. Aircraft
+gain 3, pitch trim gain 1.5, free-elevator/AoA gain 0.45 degrees/degree and neutral AoA zero. Aircraft
 identity selects this preset for Socata; unmatched aircraft use General with
 trim gains 1 and an automatic Vne-based pressure reference. These are starting
 gains, not measured hinge moments or grip forces. See configuration below.
@@ -64,16 +64,32 @@ stiffness reaches its maximum. Neither coefficient nor cap exceeds the preceding
 flight-tested maximum. This gives a gentle spring at rest and increasing stiffness
 as well as increasing caps with aerodynamic load.
 
-Mechanical resistance is centered at zero; the aerodynamic spring is centered
-at aileron trim ×rollTrimGain for roll and elevator trim ×pitchTrimGain −
-(AoA − neutralAoA) ×pitchAoAGain for pitch. Balance
-these springs at equilibrium `a / s × aerodynamicCenter`, clamped within ±1.
-At zero pressure the equilibrium is zero even with arbitrary ground AoA/trim.
-Stick movement does not change this equilibrium. The Linux constant-force
+The equilibrium balance uses **uncapped** aerodynamic load, with weight
+`w = (1 − m) × q / (m × qref + (1 − m) × q)`. Motor strength remains capped
+independently; reaching full stiffness must not freeze the equilibrium at an
+80% aerodynamic blend. Roll center is `w × aileronTrim × rollTrimGain`.
+
+Pitch uses a linear hinge-load surrogate in degrees. Positive pitch means
+elevator up. A trim ratio is multiplied by the corresponding up/down elevator
+travel; airflow contributes `−pitchAoADeflectionGain × (alpha − neutralAlpha)`.
+Static tab deflection is read separately from `acf_elev_tab`. These contributions
+are combined before converting back to a normalized center using the travel
+in the resulting direction, so asymmetric travel and opposing trim/AoA loads
+can cross zero correctly. Aerodynamic mode weights trim, static tab and airflow
+by `w`. Spring mode applies movable trim without that weight, retaining trim
+at zero airflow. Stabilizer mode excludes the elevator trim input and adds the
+actual stabilizer incidence (positive leading edge up) to alpha instead.
+All centers are clamped to ±1. At zero pressure aerodynamic/stabilizer trim
+has no influence, even with arbitrary ground AoA. Stick movement does not
+change this equilibrium. The Linux constant-force
 fallback uses equilibrium minus stick position on each axis, fixing the earlier
 extra stick gain that gave it a different zero-force position from native springs.
-Whole-aircraft AoA is still an approximation; local tail airflow, hinge geometry,
-propwash and flap effects await further modeling and physical calibration.
+Whole-aircraft AoA plus stabilizer incidence is still an approximation; downwash,
+local tail airflow, hinge coefficients, propwash and flap effects await further
+modeling and physical calibration. This is not a measured hinge moment, and
+airframe pitching torque is not used as one. Powered/FBW jets need their own
+artificial-feel profile. The [X-Plane trim types](https://developer.x-plane.com/article/types-of-flight-control-trim/)
+explain why trim tabs, spring trim and THS cannot share one center-offset rule.
 
 Roll centers slew at 0.5 normalized units/s; pitch combines a 250 ms exponential
 filter and 0.25/s limit. Strength ramps at 1/s. Callback intervals are capped
@@ -115,8 +131,12 @@ Enabling the plugin reloads the file, while normal callbacks do no file I/O.
 | `fallback_reference_speed_knots` | 1–1000 KEAS when auto has no usable Vne |
 | `mechanical_ratio` | 0.001–1; stationary stiffness fraction |
 | `roll_trim_gain`, `pitch_trim_gain` | −10–10; multiplier of live normalized trim |
-| `pitch_aoa_gain` | −1–1 normalized center units per degree |
+| `pitch_aoa_deflection_gain` | −15–15 degrees free elevator per degree AoA; default 0.45 |
+| `pitch_aoa_gain` | Legacy alias, −1–1 normalized units at 15-degree travel; multiplied by 15; do not specify both gains in one section |
 | `neutral_aoa_degrees` | −90–90 degrees; AoA reference for pitch-center offset |
+| `elevator_up_degrees`, `elevator_down_degrees` | `auto` or 0.1–90 degrees; simulator travel or 15-degree fallback |
+| `static_pitch_trim` | `auto` or −1–1 fraction of elevator travel; simulator static tab or zero fallback |
+| `pitch_trim_mode` | `auto`, `aerodynamic`, `spring`, `stabilizer`; auto detects THS travel, otherwise aerodynamic |
 | `match_icao` | Comma separated exact aircraft codes; unavailable metadata falls back to filename |
 | `match_acf` | Comma separated filename patterns supporting `*` and `?` |
 
@@ -130,8 +150,20 @@ so the maximum trim-deflection datarefs must not multiply them a second time.
 Force-response gains, mechanical resistance and neutral AoA require configuration
 and G940 calibration rather than direct aircraft-specification datarefs.
 
+Optional geometry refs are `sim/aircraft/controls/acf_elev_up`, `acf_elev_dn`,
+`acf_elev_tab`, `acf_hstb_trim_up` and `acf_hstb_trim_dn`; invalid/missing values
+use the defaults above. They are read on profile selection, not every frame.
+Stabilizer mode reads `sim/flightmodel2/controls/stabilizer_deflection_degrees`
+live; missing incidence falls back to zero, nonfinite incidence stops force.
+There is no documented reversible-trim flag dataref, so select `spring` in
+the preset explicitly. Existing configuration files remain accepted.
+X-Plane 12 pitch/roll axes should be marked `ffb` so it does not also apply its
+own trim-center mapping; [setup instructions](../README.md#x-plane-12-control-loaded-axes)
+preserve platform-specific axis assignments.
+
 Missing files use built-in General defaults (`auto`, fallback 125 KEAS,
-mechanical 0.2, trim gains 1, AoA gain 0.03, neutral AoA zero). Invalid files
+mechanical 0.2, trim gains 1, AoA deflection gain 0.45, neutral AoA zero,
+automatic geometry/trim mode). Invalid files
 prevent enabling force feedback and log errors with line numbers where applicable.
 The source installer preserves existing configuration; ZIP upgrades must keep
 the existing file manually. Configuration and simulator metadata cannot raise

@@ -138,6 +138,12 @@ int main() {
         {"sim/flightmodel/misc/Qstatic", {DATA_FLOAT, g940::defaultProfile.referencePressurePa / (2 * g940::pascalsPerPsf)}},
         {"sim/aircraft/view/acf_Vne", {DATA_FLOAT, 187}},
         {"sim/aircraft/view/acf_ICAO", {DATA_BYTES, 0, "TOBA"}},
+        {"sim/aircraft/controls/acf_elev_up", {DATA_FLOAT, 15}},
+        {"sim/aircraft/controls/acf_elev_dn", {DATA_FLOAT, 15}},
+        {"sim/aircraft/controls/acf_elev_tab", {DATA_FLOAT, .1f}},
+        {"sim/aircraft/controls/acf_hstb_trim_up", {DATA_FLOAT, 0}},
+        {"sim/aircraft/controls/acf_hstb_trim_dn", {DATA_FLOAT, 0}},
+        {"sim/flightmodel2/controls/stabilizer_deflection_degrees", {DATA_FLOAT, 0}},
         {"sim/flightmodel/position/alpha", {DATA_FLOAT, 5}},
         {"sim/flightmodel2/controls/elevator_trim", {DATA_FLOAT, .1}},
         {"sim/flightmodel2/controls/aileron_trim", {DATA_FLOAT, 0}},
@@ -164,9 +170,10 @@ int main() {
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
     assert(std::abs(observedForce.pressureRatio - .6) < .001); // Qstatic psf converted to Pa
     assert(std::abs(observedForce.roll) < .001);
-    assert(std::abs(observedForce.pitch) < .001);
+    assert(std::abs(observedForce.pitch - 1.0f / 15.0f) < .001); // static tab, live trim and AoA
     assert(std::abs(observedForce.rollForce + .1) < .001);
-    assert(std::abs(observedForce.pitchForce + .2) < .001);
+    assert(std::abs(observedForce.pitchForce + 2.0f / 15.0f) < .001);
+    assert(debugLog.find("pitch trim aerodynamic, elevator travel +15.0/-15.0 deg, static tab 0.100") != std::string::npos);
     refs["sim/flightmodel/misc/Qstatic"].value = 0;
     refs["sim/flightmodel/position/alpha"].value = -121;
     refs["sim/flightmodel2/controls/elevator_trim"].value = .2;
@@ -206,13 +213,19 @@ int main() {
     assert(deviceOpen && observedForce.pressureRatio <= .020001);
     // Resume establishes the current trim center before raising the force,
     // so neither grip mode briefly pulls toward a stale neutral position.
-    assert(std::abs(observedForce.pitch - .2f) < .00001f);
+    assert(std::abs(observedForce.pitch - 4.0f / 15.0f) < .00001f);
     assert(std::abs(observedForce.roll + .2f) < .00001f);
     assert(observedForce.effectScale <= .020001f);
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
     refs["sim/aircraft/view/acf_ICAO"].text = "B738";
     refs["sim/aircraft/view/acf_Vne"].value = 340;
     aircraftFile = "Boeing 737.acf";
+    refs["sim/aircraft/controls/acf_elev_up"].value = 30;
+    refs["sim/aircraft/controls/acf_elev_dn"].value = 15;
+    refs["sim/aircraft/controls/acf_elev_tab"].value = 0;
+    refs["sim/aircraft/controls/acf_hstb_trim_up"].value = 4;
+    refs["sim/aircraft/controls/acf_hstb_trim_dn"].value = 2;
+    refs["sim/flightmodel2/controls/stabilizer_deflection_degrees"].value = 3;
     XPluginReceiveMessage(XPLM_PLUGIN_XPLANE, XPLM_MSG_PLANE_LOADED, reinterpret_cast<void *>(1));
     callback(.02f, 0, 0, nullptr);
     assert(std::abs(observedForce.pressureRatio - .6f) < .001); // ignore AI plane changes
@@ -223,6 +236,18 @@ int main() {
     assert(std::abs(observedForce.pressureRatio - .2540657f) < .001); // General at Vne=340
     assert(debugLog.find("profile 'General' for Boeing 737.acf") != std::string::npos);
     assert(debugLog.find("340.0 kt (X-Plane Vne scaling)") != std::string::npos);
+    assert(debugLog.find("pitch trim stabilizer, elevator travel +30.0/-15.0 deg, static tab 0.000") != std::string::npos);
+    assert(observedForce.pitch < 0);
+    const float thsPitch = observedForce.pitch;
+    refs["sim/flightmodel2/controls/elevator_trim"].value = -.3f;
+    for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+    assert(std::abs(observedForce.pitch - thsPitch) < 1e-6f); // no extra elevator offset for THS
+    refs["sim/flightmodel2/controls/elevator_trim"].value = .3f;
+    refs["sim/flightmodel2/controls/stabilizer_deflection_degrees"].value = 0;
+    callback(.02f, 0, 0, nullptr);
+    assert(observedForce.pitch > thsPitch && observedForce.pitch - thsPitch <= .005001f);
+    for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+    assert(observedForce.pitch > thsPitch); // incidence changes the force balance smoothly
 #endif
     allowUpdate = false;
     assert(callback(0, 0, 0, nullptr) == 5.0f);
@@ -240,7 +265,7 @@ int main() {
     XPluginStop();
     assert(!callback && !deviceOpen && registrations == 2 && unregistrations == 2);
 #ifndef TEST_LEDS
-    std::ofstream(configFolder / "aircraft.ini") << "[General]\nreference_speed_knots=150\npitch_aoa_gain=0\n";
+    std::ofstream(configFolder / "aircraft.ini") << "[General]\nreference_speed_knots=150\npitch_aoa_gain=0\npitch_trim_mode=spring\n";
     assert(XPluginEnable() == 1);
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
     assert(std::abs(observedForce.pressureRatio - .4777778f) < .001); // reread config on enable
@@ -254,11 +279,15 @@ int main() {
     std::filesystem::remove(configFolder / "aircraft.ini");
     refs.erase("sim/aircraft/view/acf_ICAO");
     refs.erase("sim/aircraft/view/acf_Vne");
+    for (const char *optional : {"sim/aircraft/controls/acf_elev_up", "sim/aircraft/controls/acf_elev_dn",
+         "sim/aircraft/controls/acf_elev_tab", "sim/aircraft/controls/acf_hstb_trim_up", "sim/aircraft/controls/acf_hstb_trim_dn",
+         "sim/flightmodel2/controls/stabilizer_deflection_degrees"}) refs.erase(optional);
     assert(XPluginStart(name, signature, description) == 1); // optional metadata absent
     assert(XPluginEnable() == 1);
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
     assert(std::abs(observedForce.pressureRatio - .6f) < .001); // built-in reference fallback
     assert(debugLog.find("aircraft.ini missing") != std::string::npos);
+    assert(debugLog.find("pitch trim aerodynamic, elevator travel +15.0/-15.0 deg, static tab 0.000") != std::string::npos);
     XPluginStop();
     std::filesystem::remove_all(configRoot);
 #endif

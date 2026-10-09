@@ -21,6 +21,7 @@
 namespace {
 XPLMDataRef rollRef, pitchRef, pressureRef, alphaRef, eTrimRef, aTrimRef, pausedRef;
 XPLMDataRef icaoRef, vneRef;
+XPLMDataRef elevatorUpRef, elevatorDownRef, staticPitchTrimRef, stabilizerUpRef, stabilizerDownRef, stabilizerRef;
 std::filesystem::path configFile;
 std::vector<g940::ConfigProfile> profiles = {g940::ConfigProfile{}};
 g940::AircraftProfile aircraftProfile;
@@ -64,12 +65,20 @@ void selectProfile() {
     }
     const float vne = vneRef ? XPLMGetDataf(vneRef) : 0.0f;
     const auto& profile = g940::selectAircraftProfile(profiles, icao, filename);
-    aircraftProfile = g940::resolveAircraftProfile(profile, vne);
+    const auto optionalFloat = [](XPLMDataRef reference) { return reference ? XPLMGetDataf(reference) : 0.0f; };
+    const g940::AircraftGeometry geometry{optionalFloat(elevatorUpRef), optionalFloat(elevatorDownRef),
+        optionalFloat(staticPitchTrimRef), optionalFloat(stabilizerUpRef), optionalFloat(stabilizerDownRef)};
+    aircraftProfile = g940::resolveAircraftProfile(profile, vne, geometry);
     const bool fromVne = profile.referenceKnots == 0 && std::isfinite(vne) && vne >= 1 && vne <= 1000;
     char message[512];
     std::snprintf(message, sizeof(message), "G940 FF: profile '%s' for %s (ICAO %s), reference %.1f kt (%s)\n",
         profile.name.c_str(), filename, icao, g940::referenceSpeed(profile, vne),
         fromVne ? "X-Plane Vne scaling" : profile.referenceKnots > 0 ? "configuration" : "fallback");
+    XPLMDebugString(message);
+    const char *mode = aircraftProfile.pitchTrimMode == g940::PitchTrimMode::spring ? "spring" :
+        aircraftProfile.pitchTrimMode == g940::PitchTrimMode::stabilizer ? "stabilizer" : "aerodynamic";
+    std::snprintf(message, sizeof(message), "G940 FF: pitch trim %s, elevator travel +%.1f/-%.1f deg, static tab %.3f\n",
+        mode, aircraftProfile.elevatorUpDegrees, aircraftProfile.elevatorDownDegrees, aircraftProfile.staticPitchTrim);
     XPLMDebugString(message);
 }
 
@@ -126,8 +135,10 @@ float flightLoopCallback(float elapsed, float, int, void *) {
     const float pressurePa = XPLMGetDataf(pressureRef) * g940::pascalsPerPsf;
     const float alpha = XPLMGetDataf(alphaRef);
     const float elevatorTrim = XPLMGetDataf(eTrimRef), aileronTrim = XPLMGetDataf(aTrimRef);
+    const float stabilizer = aircraftProfile.pitchTrimMode == g940::PitchTrimMode::stabilizer && stabilizerRef ?
+        XPLMGetDataf(stabilizerRef) : 0.0f;
     const g940::ForceState target = g940::calculateForce(
-        roll, pitch, pressurePa, alpha, elevatorTrim, aileronTrim, aircraftProfile);
+        roll, pitch, pressurePa, alpha, elevatorTrim, aileronTrim, aircraftProfile, stabilizer);
     if (startingForce) forceSmoother.reset(target);
     const g940::ForceState state = forceSmoother.update(target, elapsed);
 #ifdef G940_DEBUG_FORCE
@@ -136,10 +147,10 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         char message[384];
         std::snprintf(message, sizeof(message),
             "G940 FF trace: q=%.2f Pa ratio=%.3f "
-            "yoke=(%.3f,%.3f) trim=(%.3f,%.3f) alpha=%.2f centers=(%.3f,%.3f) "
+            "yoke=(%.3f,%.3f) trim=(%.3f,%.3f) alpha=%.2f stab=%.2f centers=(%.3f,%.3f) "
             "coeff=(%u,%u) spring=(%.3f,%.3f) scale=%.3f\n",
             pressurePa, state.pressureRatio, roll, pitch, aileronTrim, elevatorTrim,
-            alpha, state.roll, state.pitch,
+            alpha, stabilizer, state.roll, state.pitch,
             g940::springCoefficient(state.pressureRatio * state.effectScale, 0),
             g940::springCoefficient(state.pressureRatio * state.effectScale, 1),
             g940::springSaturationRatio(state.pressureRatio, 0) * state.effectScale,
@@ -189,6 +200,12 @@ PLUGIN_API int XPluginStart(char *outName, char *outSig, char *outDesc) {
     }
     icaoRef = XPLMFindDataRef("sim/aircraft/view/acf_ICAO");
     vneRef = XPLMFindDataRef("sim/aircraft/view/acf_Vne");
+    elevatorUpRef = XPLMFindDataRef("sim/aircraft/controls/acf_elev_up");
+    elevatorDownRef = XPLMFindDataRef("sim/aircraft/controls/acf_elev_dn");
+    staticPitchTrimRef = XPLMFindDataRef("sim/aircraft/controls/acf_elev_tab");
+    stabilizerUpRef = XPLMFindDataRef("sim/aircraft/controls/acf_hstb_trim_up");
+    stabilizerDownRef = XPLMFindDataRef("sim/aircraft/controls/acf_hstb_trim_dn");
+    stabilizerRef = XPLMFindDataRef("sim/flightmodel2/controls/stabilizer_deflection_degrees");
     return 1;
 }
 

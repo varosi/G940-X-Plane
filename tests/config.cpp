@@ -39,10 +39,35 @@ int main() {
     const auto& jet = selectAircraftProfile(inherited, "b738", "unknown.acf");
     assert(jet.name == "Jet"); // ICAO takes precedence over filename matchers
     assert(jet.force.mechanicalRatio == .3f && jet.force.rollTrimGain == 2);
-    assert(jet.force.pitchAoAGain == 0 && referenceSpeed(jet, 340) == 250);
+    assert(jet.force.pitchAoADeflectionGain == 0 && referenceSpeed(jet, 340) == 250);
     const auto jetForce = resolveAircraftProfile(jet, 340);
     assert(calculateForce(0, 0, 1000, 10, 0, 0, jetForce).pitch == 0);
     assert(referenceSpeed(inherited.front(), 0) == 145);
+
+    const AircraftGeometry geometry{25, 12, .1f, 10, 4};
+    const auto automatic = resolveAircraftProfile(general, 340, geometry);
+    assert(automatic.elevatorUpDegrees == 25 && automatic.elevatorDownDegrees == 12);
+    assert(automatic.staticPitchTrim == .1f && automatic.pitchTrimMode == PitchTrimMode::stabilizer);
+    assert(resolveAircraftProfile(tb10, 187, geometry).pitchTrimMode == PitchTrimMode::aerodynamic);
+    std::istringstream overrideInput("[General]\nelevator_up_degrees=20\nelevator_down_degrees=10\n"
+        "static_pitch_trim=-.05\npitch_trim_mode=spring\npitch_aoa_deflection_gain=.6\n");
+    const auto overrides = readAircraftConfig(overrideInput);
+    const auto resolved = resolveAircraftProfile(overrides.front(), 187, geometry);
+    assert(resolved.elevatorUpDegrees == 20 && resolved.elevatorDownDegrees == 10);
+    assert(resolved.staticPitchTrim == -.05f && resolved.pitchTrimMode == PitchTrimMode::spring);
+    assert(resolved.pitchAoADeflectionGain == .6f);
+    for (float bad : {0.0f, -1.0f, 100.0f, std::numeric_limits<float>::quiet_NaN()}) {
+        const auto fallback = resolveAircraftProfile(general, 0, {bad, bad, std::isfinite(bad) ? 2.0f : bad, bad, bad});
+        assert(fallback.elevatorUpDegrees == 15 && fallback.elevatorDownDegrees == 15);
+        assert(fallback.staticPitchTrim == 0 && fallback.pitchTrimMode == PitchTrimMode::aerodynamic);
+    }
+    std::istringstream legacyInput("[General]\npitch_aoa_gain=.03\n");
+    assert(std::abs(readAircraftConfig(legacyInput).front().force.pitchAoADeflectionGain - .45f) < 1e-6f);
+    std::istringstream autoInput("[General]\nelevator_up_degrees=20\npitch_trim_mode=spring\n"
+        "[Reset]\nmatch_icao=RESET\nelevator_up_degrees=auto\npitch_trim_mode=auto\n");
+    const auto resetProfiles = readAircraftConfig(autoInput);
+    const auto reset = resolveAircraftProfile(resetProfiles.back(), 187, geometry);
+    assert(reset.elevatorUpDegrees == 25 && reset.pitchTrimMode == PitchTrimMode::stabilizer);
 
     for (const char *bad : {
         "", "reference_speed_knots=125", "[General", "[]", "[General]\n[general]",
@@ -52,7 +77,11 @@ int main() {
         "[General]\nreference_speed_knots=1e100", "[General]\nmechanical_ratio=1.1",
         "[General]\npitch_aoa_gain=2", "[General]\nmatch_icao=TOBA",
         "[General]\n[Aircraft]\npitch_trim_gain=2", "[General]\n[Aircraft]\nmatch_icao=TOBA,",
-        "[General]\n[Aircraft]\nmatch_acf=,*.acf"
+        "[General]\n[Aircraft]\nmatch_acf=,*.acf",
+        "[General]\nelevator_up_degrees=0", "[General]\nelevator_down_degrees=91",
+        "[General]\nstatic_pitch_trim=1.1", "[General]\npitch_trim_mode=jet",
+        "[General]\npitch_aoa_deflection_gain=16",
+        "[General]\npitch_aoa_deflection_gain=.45\npitch_aoa_gain=.03"
     }) {
         std::istringstream invalid(bad);
         bool rejected = false;
