@@ -58,7 +58,17 @@ changing compilers, SDK paths or flags. Clean preserves `build/previous-sdk-stub
 
 ## Install
 
-Close X-Plane, then run:
+GitHub Actions builds and tests all three OSes on pushes and pull requests.
+Open a successful run on the repository's **Actions** tab and download
+`G940-X-Plane-linux-x86_64.zip`, `G940-X-Plane-windows-x86_64.zip`, or
+`G940-X-Plane-mac-universal.zip` from **Artifacts**. Each ZIP contains both
+plugins under `Resources/plugins/`, plus a license and installation instructions.
+With X-Plane closed, back up existing G940 plugins, then merge the archive's
+`Resources` folder into your X-Plane installation. The Mac build contains both
+Intel and Apple Silicon binaries. Linux device permissions and LED driver
+requirements below still apply.
+
+For installation from source, close X-Plane, then run:
 
 ```sh
 make install XP_INSTALL_PATH="/path/to/X-Plane 12"
@@ -93,7 +103,14 @@ feedback needs read/write access to `/dev/input/event*`; LEDs need the original
 `make test` checks packet encoding, trim filtering, invalid inputs, pause fades,
 dataref types, lifecycle/reconnection, native backup/rollback/restoration and
 installation without moving hardware. Assertions stay enabled with release
-flags. CI runs these checks on all three OSes.
+flags. CI runs these checks and validates the installable ZIP layout on all
+three OSes. Create the same archive locally with:
+
+```sh
+python3 -m tools.package --platform mac --output build/dist/G940-X-Plane-mac-universal.zip
+```
+
+Use `--platform linux` or `--platform windows` for those builds.
 For optional force traces every two seconds, use a separate build directory:
 
 ```sh
