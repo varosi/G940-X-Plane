@@ -119,7 +119,7 @@ int main() {
     // Small trim steps must be filtered as well as large changes: the old
     // slew limiter applied a small step in one frame.
     ForceSmoother smallTrim;
-    const ForceState smallTarget(0, .004, .5);
+    const ForceState smallTarget{0.0f, .004f, .5f};
     const auto firstSmallStep = smallTrim.update(smallTarget, .02);
     assert(firstSmallStep.pitch > 0 && firstSmallStep.pitch < .001);
     assert(firstSmallStep.pitch < smallTarget.pitch);

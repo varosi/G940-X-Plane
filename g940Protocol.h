@@ -53,9 +53,9 @@ inline ForceState calculateForce(float roll, float pitch, float speed,
     const float pitchForce = pitchCenter - clamp(pitch, -1.0f, 1.0f) * 1.5f;
     const bool validSpeed = std::isfinite(speed) && speed >= 0.0f &&
         std::isfinite(vne) && vne > 0.0f;
-    ForceState result(rollCenter, pitchCenter,
+    ForceState result{rollCenter, pitchCenter,
         validSpeed ? std::max(minimumForceRatio, clamp(speed / vne, 0.0f, 1.0f)) : 0.0f,
-        rollForce, pitchForce);
+        rollForce, pitchForce};
     return result;
 }
 
