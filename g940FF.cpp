@@ -1,5 +1,7 @@
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #ifdef G940_DEBUG_FORCE
 #include <chrono>
@@ -7,9 +9,10 @@
 #include "XPLMPlugin.h"
 #include "XPLMDataAccess.h"
 #include "XPLMProcessing.h"
+#include "XPLMPlanes.h"
 #include "XPLMUtilities.h"
 #include "g940Backend.h"
-#include "g940ForceModel.h"
+#include "g940Config.h"
 
 #ifndef XPLM300
 #error This plugin requires the XPLM300 API
@@ -17,6 +20,11 @@
 
 namespace {
 XPLMDataRef rollRef, pitchRef, pressureRef, alphaRef, eTrimRef, aTrimRef, pausedRef;
+XPLMDataRef icaoRef, vneRef;
+std::filesystem::path configFile;
+std::vector<g940::ConfigProfile> profiles = {g940::ConfigProfile{}};
+g940::AircraftProfile aircraftProfile;
+bool profileDirty = true;
 bool enabled = false;
 bool forceReady = false;
 g940::ForceSmoother forceSmoother;
@@ -29,7 +37,52 @@ void reportError() {
     XPLMDebugString(message.c_str());
 }
 
+bool loadProfiles() {
+    try {
+        std::ifstream input(configFile);
+        if (input) profiles = g940::readAircraftConfig(input);
+        else {
+            if (std::filesystem::exists(configFile)) throw std::runtime_error("cannot read configuration");
+            profiles = {g940::ConfigProfile{}};
+            XPLMDebugString("G940 FF: aircraft.ini missing; using General defaults and X-Plane Vne\n");
+        }
+        return true;
+    } catch (const std::exception& error) {
+        const auto message = std::string("G940 FF: aircraft.ini: ") + error.what() + "\n";
+        XPLMDebugString(message.c_str());
+        return false;
+    }
+}
+
+void selectProfile() {
+    char filename[256] = {}, path[512] = {}, icao[41] = {};
+    XPLMGetNthAircraftModel(0, filename, path);
+    if (icaoRef) {
+        const int count = XPLMGetDatab(icaoRef, icao, 0, sizeof(icao) - 1);
+        if (count < 0 || count >= static_cast<int>(sizeof(icao))) icao[0] = 0;
+        else icao[count] = 0;
+    }
+    const float vne = vneRef ? XPLMGetDataf(vneRef) : 0.0f;
+    const auto& profile = g940::selectAircraftProfile(profiles, icao, filename);
+    aircraftProfile = g940::resolveAircraftProfile(profile, vne);
+    const bool fromVne = profile.referenceKnots == 0 && std::isfinite(vne) && vne >= 1 && vne <= 1000;
+    char message[512];
+    std::snprintf(message, sizeof(message), "G940 FF: profile '%s' for %s (ICAO %s), reference %.1f kt (%s)\n",
+        profile.name.c_str(), filename, icao, g940::referenceSpeed(profile, vne),
+        fromVne ? "X-Plane Vne scaling" : profile.referenceKnots > 0 ? "configuration" : "fallback");
+    XPLMDebugString(message);
+}
+
 float flightLoopCallback(float elapsed, float, int, void *) {
+    if (profileDirty) {
+        if (forceReady && !g940::releaseForceFeedback()) {
+            reportError(); g940::closeForceFeedback();
+        }
+        forceReady = false;
+        forceSmoother.reset();
+        selectProfile();
+        profileDirty = false;
+    }
     if (!g940::prepareForceFeedback()) {
         reportError(); forceReady = false; forceSmoother.reset(); return 5.0f;
     }
@@ -74,7 +127,7 @@ float flightLoopCallback(float elapsed, float, int, void *) {
     const float alpha = XPLMGetDataf(alphaRef);
     const float elevatorTrim = XPLMGetDataf(eTrimRef), aileronTrim = XPLMGetDataf(aTrimRef);
     const g940::ForceState target = g940::calculateForce(
-        roll, pitch, pressurePa, alpha, elevatorTrim, aileronTrim);
+        roll, pitch, pressurePa, alpha, elevatorTrim, aileronTrim, aircraftProfile);
     if (startingForce) forceSmoother.reset(target);
     const g940::ForceState state = forceSmoother.update(target, elapsed);
 #ifdef G940_DEBUG_FORCE
@@ -107,6 +160,15 @@ PLUGIN_API int XPluginStart(char *outName, char *outSig, char *outDesc) {
     std::strcpy(outName, "G940 Force Feedback");
     std::strcpy(outSig, "name.boyle.chris.xpff");
     std::strcpy(outDesc, "Connects X-Plane to force-feedback hardware.");
+    XPLMEnableFeature("XPLM_USE_NATIVE_PATHS", 1);
+    char pluginPath[4096] = {};
+    XPLMGetPluginInfo(XPLMGetMyID(), nullptr, pluginPath, nullptr, nullptr);
+    if (!pluginPath[0]) {
+        XPLMDebugString("G940 FF: cannot locate plugin configuration directory\n");
+        return 0;
+    }
+    const auto folder = std::filesystem::path(std::u8string(pluginPath, pluginPath + std::strlen(pluginPath))).parent_path();
+    configFile = (folder.filename() == "64" ? folder.parent_path() : folder) / "aircraft.ini";
     struct Reference { XPLMDataRef *target; const char *name; };
     const Reference references[] = {
         {&rollRef, "sim/joystick/yoke_roll_ratio"},
@@ -125,11 +187,15 @@ PLUGIN_API int XPluginStart(char *outName, char *outSig, char *outDesc) {
             return 0;
         }
     }
+    icaoRef = XPLMFindDataRef("sim/aircraft/view/acf_ICAO");
+    vneRef = XPLMFindDataRef("sim/aircraft/view/acf_Vne");
     return 1;
 }
 
 PLUGIN_API int XPluginEnable() {
     if (!enabled) {
+        if (!loadProfiles()) return 0;
+        profileDirty = true;
         XPLMRegisterFlightLoopCallback(flightLoopCallback, 0.01f, nullptr);
         enabled = true;
     }
@@ -145,4 +211,7 @@ PLUGIN_API void XPluginDisable() {
 }
 
 PLUGIN_API void XPluginStop() { XPluginDisable(); }
-PLUGIN_API void XPluginReceiveMessage(XPLMPluginID, int, void *) {}
+PLUGIN_API void XPluginReceiveMessage(XPLMPluginID sender, int message, void *parameter) {
+    if (sender == XPLM_PLUGIN_XPLANE && message == XPLM_MSG_PLANE_LOADED && parameter == nullptr)
+        profileDirty = true;
+}

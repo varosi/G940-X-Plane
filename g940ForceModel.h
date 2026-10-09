@@ -9,21 +9,20 @@ constexpr float knotsToMps = 0.51444444f;
 constexpr float seaLevelDensity = 1.225f;
 
 struct AircraftProfile {
-    // Initial TB10/TB20 tuning, not measured hinge moments or grip forces.
-    // Full spring stiffness at 125 knots equivalent airspeed.
+    // Generic fallback tuning when no configuration/simulator reference is available.
     float referencePressurePa = 0.5f * seaLevelDensity *
         (125.0f * knotsToMps) * (125.0f * knotsToMps);
     float mechanicalRatio = minimumForceRatio;
-    float rollTrimGain = 3.0f;
-    float pitchTrimGain = 1.5f;
+    float rollTrimGain = 1.0f;
+    float pitchTrimGain = 1.0f;
     float pitchAoAGain = 0.03f;
     float neutralAoADegrees = 0.0f;
 };
-inline constexpr AircraftProfile tb10tb20Profile{};
+inline constexpr AircraftProfile defaultProfile{};
 
 inline ForceState calculateForce(float roll, float pitch, float pressurePa,
                                 float alpha, float elevatorTrim, float aileronTrim,
-                                const AircraftProfile& profile = tb10tb20Profile) {
+                                const AircraftProfile& profile = defaultProfile) {
     if (!std::isfinite(roll) || !std::isfinite(pitch) ||
         !std::isfinite(pressurePa) || pressurePa < 0.0f ||
         !std::isfinite(alpha) || !std::isfinite(elevatorTrim) || !std::isfinite(aileronTrim) ||

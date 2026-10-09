@@ -49,12 +49,12 @@ with factor 47.88026. This already accounts for air density and airflow through
 or nonfinite pressure, nonfinite control/trim/AoA data or an invalid profile
 stops force immediately. Zero pressure is valid and retains mechanical load.
 
-The initial [TB10/TB20 profile](../g940ForceModel.h) has reference pressure about
+The initial [TB10/TB20 profile](../aircraft.ini) has reference pressure about
 2533 Pa (125 knots equivalent airspeed), mechanical ratio `m = 0.2`, roll trim
-gain 3, pitch trim gain 1.5, AoA gain 0.03/degree and neutral AoA zero. It is the
-default profile for every loaded aircraft in this experimental branch; aircraft
-detection and other aircraft profiles are not implemented. These are starting
-gains, not measured hinge moments or grip forces.
+gain 3, pitch trim gain 1.5, AoA gain 0.03/degree and neutral AoA zero. Aircraft
+identity selects this preset for Socata; unmatched aircraft use General with
+trim gains 1 and an automatic Vne-based pressure reference. These are starting
+gains, not measured hinge moments or grip forces. See configuration below.
 
 Aerodynamic stiffness is `a = (1 − m) × clamp(q / qref, 0, 1)` and total
 strength is `s = m + a`. Roll/pitch coefficients are `round(80 × s)` and
@@ -65,7 +65,8 @@ flight-tested maximum. This gives a gentle spring at rest and increasing stiffne
 as well as increasing caps with aerodynamic load.
 
 Mechanical resistance is centered at zero; the aerodynamic spring is centered
-at aileron trim ×3 for roll and elevator trim ×1.5 − AoA ×0.03 for pitch. Balance
+at aileron trim ×rollTrimGain for roll and elevator trim ×pitchTrimGain −
+(AoA − neutralAoA) ×pitchAoAGain for pitch. Balance
 these springs at equilibrium `a / s × aerodynamicCenter`, clamped within ±1.
 At zero pressure the equilibrium is zero even with arbitrary ground AoA/trim.
 Stick movement does not change this equilibrium. The Linux constant-force
@@ -95,6 +96,46 @@ Idle firmware caps spring and damping together; the live channel caps them
 separately. Static emulation and a bench comparison agree in both grip modes,
 but the latest flight reported early near-center grip-release kicks. Their
 cause remains unisolated; see [hardware findings](HARDWARE_TESTS.md).
+
+## Aircraft configuration
+
+`Resources/plugins/g940FF/aircraft.ini` contains an INI `[General]` fallback
+and aircraft presets inheriting its values. Selection prefers exact ICAO codes
+from `sim/aircraft/view/acf_ICAO`, then filename globs from
+`XPLMGetNthAircraftModel(0)`; first match in file order wins within each level.
+The tested combined Socata reports `TOBA` and its filename also matches the
+Socata preset. Native UTF-8 paths locate the file beside the plugin's `64`
+directory. A user-aircraft load message resets forces and primes the new
+profile's current center before ramping in; AI load messages do not switch it.
+Enabling the plugin reloads the file, while normal callbacks do no file I/O.
+
+| Setting | Values / meaning |
+| --- | --- |
+| `reference_speed_knots` | `auto` or 1–1000 KEAS; full-stiffness pressure reference |
+| `fallback_reference_speed_knots` | 1–1000 KEAS when auto has no usable Vne |
+| `mechanical_ratio` | 0.001–1; stationary stiffness fraction |
+| `roll_trim_gain`, `pitch_trim_gain` | −10–10; multiplier of live normalized trim |
+| `pitch_aoa_gain` | −1–1 normalized center units per degree |
+| `neutral_aoa_degrees` | −90–90 degrees; AoA reference for pitch-center offset |
+| `match_icao` | Comma separated exact aircraft codes; unavailable metadata falls back to filename |
+| `match_acf` | Comma separated filename patterns supporting `*` and `?` |
+
+`auto` uses positive finite `sim/aircraft/view/acf_Vne` within 1–1000 knots,
+otherwise the configured fallback. Vne is indicated airspeed; treating it as
+equivalent airspeed is a low-Mach approximation used for pressure scaling.
+This is a provisional tuning heuristic, not a measured control-force reference.
+An explicit numeric setting overrides it; live pressure/trim/AoA still come
+from X-Plane. Existing trim fractions already include aircraft trim authority,
+so the maximum trim-deflection datarefs must not multiply them a second time.
+Force-response gains, mechanical resistance and neutral AoA require configuration
+and G940 calibration rather than direct aircraft-specification datarefs.
+
+Missing files use built-in General defaults (`auto`, fallback 125 KEAS,
+mechanical 0.2, trim gains 1, AoA gain 0.03, neutral AoA zero). Invalid files
+prevent enabling force feedback and log errors with line numbers where applicable.
+The source installer preserves existing configuration; ZIP upgrades must keep
+the existing file manually. Configuration and simulator metadata cannot raise
+the transport's existing maximum coefficients or force caps.
 
 ## Probe
 

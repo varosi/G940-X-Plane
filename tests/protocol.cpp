@@ -34,7 +34,7 @@ int main() {
     const auto halfEffect = forceReport({0, 0, .5, 0, 0, .5});
     assert(halfEffect[11] == 20 && halfEffect[41] == 28); // stiffness fades too
     assert(halfEffect[43] == 0 && halfEffect[44] == 0x31);
-    const float referencePressure = tb10tb20Profile.referencePressurePa;
+    const float referencePressure = defaultProfile.referencePressurePa;
     assert(referencePressure > 2530 && referencePressure < 2540); // 125 KEAS, Pa
     const auto stationary = calculateForce(.2, -.2, 0, -121, .2, .1);
     assert(stationary.pressureRatio == minimumForceRatio);
@@ -47,8 +47,8 @@ int main() {
     assert(taxi.pressureRatio > minimumForceRatio && taxi.pitch < .01);
     const auto blended = calculateForce(0, 0, referencePressure / 2, 5, .2, .1);
     assert(std::abs(blended.pressureRatio - .6) < 1e-6);
-    assert(std::abs(blended.roll - .2) < 1e-6);
-    assert(std::abs(blended.pitch - .1) < 1e-6);
+    assert(std::abs(blended.roll - .06666667) < 1e-6);
+    assert(std::abs(blended.pitch - .03333333) < 1e-6);
 
     // q = rho*V^2/2: doubling airflow quadruples aerodynamic stiffness;
     // halving density halves it. The mechanical component remains at zero q.
@@ -64,12 +64,12 @@ int main() {
     assert(slowReport[11] < fastReport[11] && slowReport[41] < fastReport[41]);
     assert(slowReport[14] < fastReport[14] && slowReport[44] < fastReport[44]);
     assert(calculateForce(0, 0, 100 * referencePressure, 0, 0, 0).pressureRatio == 1);
-    auto profile = tb10tb20Profile;
+    auto profile = defaultProfile;
     profile.referencePressurePa *= 2;
     assert(std::abs(calculateForce(0, 0, referencePressure, 0, 0, 0, profile).pressureRatio - .6) < 1e-6);
     profile.referencePressurePa = 0;
     assert(calculateForce(0, 0, 100, 0, 0, 0, profile).pressureRatio == 0);
-    profile = tb10tb20Profile;
+    profile = defaultProfile;
     profile.mechanicalRatio = -1;
     assert(calculateForce(0, 0, 100, 0, 0, 0, profile).pressureRatio == 0);
     profile.mechanicalRatio = 2;
@@ -82,10 +82,10 @@ int main() {
     assert(calculateForce(0, 0, 100, infinity, 0, 0).pressureRatio == 0);
     assert(calculateForce(nan, 0, 100, 0, 0, 0).pressureRatio == 0);
     assert(calculateForce(0, 0, 100, 0, infinity, 0).pressureRatio == 0);
-    profile = tb10tb20Profile;
+    profile = defaultProfile;
     profile.pitchTrimGain = nan;
     assert(calculateForce(0, 0, 100, 0, 0, 0, profile).pressureRatio == 0);
-    profile = tb10tb20Profile;
+    profile = defaultProfile;
     profile.referencePressurePa = .00001f;
     assert(calculateForce(0, 0, std::numeric_limits<float>::max(), 0, 0, 0, profile).pressureRatio == 1);
     const auto invalid = forceReport({nan, nan, nan});
@@ -119,7 +119,7 @@ int main() {
     // Stick motion must not move the spring's trim target along with the
     // physical stick: doing so creates feedback around a moving neutral point.
     const auto trimTarget = calculateForce(0, 0, referencePressure / 2, 0, .5, .1);
-    const auto displaced = calculateForce(.5, .5, referencePressure / 2, 0, .5, .1);
+    const auto displaced = calculateForce(.5, trimTarget.pitch, referencePressure / 2, 0, .5, .1);
     assert(trimTarget.roll == displaced.roll && trimTarget.pitch == displaced.pitch);
     assert(trimTarget.rollForce > displaced.rollForce);
     assert(trimTarget.pitchForce > displaced.pitchForce);

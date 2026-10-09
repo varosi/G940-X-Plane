@@ -4,24 +4,22 @@ from pathlib import Path
 import sys
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from tools.install import FILENAMES, PLUGINS
+from tools.install import FILENAMES, build_files
 
 
 def package(build_dir, platform, output):
-    filename = FILENAMES[platform]
-    sources = [Path(build_dir) / plugin / "64" / filename for plugin in PLUGINS]
-    for source in sources:
-        if not source.is_file():
-            raise ValueError(f"Plugin has not been built: {source}")
+    sources = build_files(build_dir, platform)
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
-        for plugin, source in zip(PLUGINS, sources):
-            archive.write(source, f"Resources/plugins/{plugin}/64/{filename}")
+        for source, relative, _ in sources:
+            archive.write(source, "Resources/plugins/" + relative.as_posix())
         archive.write(Path(__file__).resolve().parents[1] / "LICENSE", "LICENSE")
         archive.writestr("INSTALL.txt", "Close X-Plane and back up existing G940 plugins.\n"
                           "Copy this archive's Resources folder into your X-Plane 11/12 folder,\n"
                           "merging folders and replacing only the matching .xpl files.\n"
+                          "Keep your existing g940FF/aircraft.ini when upgrading.\n"
+                          "New installations include General and Socata TB10/TB20 presets.\n"
                           "Start X-Plane and check Log.txt for g940FF and g940LEDs.\n"
                           "Linux requires writable evdev devices and a G940 LED sysfs driver.\n"
                           "See https://github.com/chrisboyle/G940-X-Plane for documentation.\n")

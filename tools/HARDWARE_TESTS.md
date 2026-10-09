@@ -62,10 +62,14 @@ strength and fixed stiffness with ambient dynamic pressure, a mechanical spring
 baseline and a pressure-weighted trim equilibrium. Maximum coefficients/caps,
 trim filtering, pause fading and live/idle mirroring are retained. Linux's
 constant-force fallback now reaches zero force at the native spring equilibrium.
+Aircraft configuration now supplies General and Socata presets, selected by
+ICAO or filename. Socata retains its initial gains; General uses normalized
+trim gains of 1 and X-Plane Vne as a provisional pressure-scaling reference.
 
 Software tests cover the pressure units, speed-squared/density scaling, ground
 baseline, increasing stiffness/caps, bounded maximums, trim equilibrium and
-existing lifecycle/rollback behavior. No new motor or flight test has run for
+profile parsing/selection/reload, metadata fallback, installation preserving
+user settings, and existing lifecycle/rollback behavior. No new motor or flight test has run for
 this model; preceding flight observations do not validate it. The initial 125
 KEAS reference and trim/AoA gains require tuning, and the grip-release kick
 remains open. Next flight comparisons should use the same tested TB10/TB20;

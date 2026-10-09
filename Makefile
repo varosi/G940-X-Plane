@@ -84,7 +84,11 @@ LINK_TARGETS := $(foreach plugin,$(PLUGINS),$(OBJDIR)/$(plugin)/$(PLUGIN_FILE))
 
 .PHONY: all clean install sdk test probe FORCE
 .SECONDARY: $(OBJECTS) $(LINK_TARGETS)
-all: $(TARGETS)
+all: $(TARGETS) $(BUILDDIR)/g940FF/aircraft.ini
+
+$(BUILDDIR)/g940FF/aircraft.ini: aircraft.ini
+	mkdir -p "$(dir $@)"
+	cp "$<" "$@"
 
 # This official header is absent from the old handwritten SDK replacements.
 sdk: $(SDK_HEADER)
@@ -124,6 +128,8 @@ test: $(SDK_HEADER)
 	mkdir -p "$(BUILDDIR)/tests"
 	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/protocol.cpp -I. -o "$(BUILDDIR)/tests/protocol"
 	"$(BUILDDIR)/tests/protocol"
+	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/config.cpp -I. -o "$(BUILDDIR)/tests/config"
+	"$(BUILDDIR)/tests/config"
 	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/plugin_host.cpp -I. -o "$(BUILDDIR)/tests/force-feedback"
 	"$(BUILDDIR)/tests/force-feedback"
 	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) -DTEST_LEDS tests/plugin_host.cpp -I. -o "$(BUILDDIR)/tests/leds"

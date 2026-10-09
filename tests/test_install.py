@@ -59,17 +59,34 @@ class InstallTests(unittest.TestCase):
             target.mkdir(parents=True)
             (target / "mac.xpl").write_bytes(b"old mac plugin")
             (target / "lin.xpl").write_bytes(b"linux plugin")
+        (build / "g940FF/aircraft.ini").write_text("[General]\n", encoding="utf-8")
         installer.install(build, "mac", sim)
+        config = sim / "Resources/plugins/g940FF/aircraft.ini"
+        self.assertEqual(config.read_text(), "[General]\n")
+        config.write_text("[General]\nreference_speed_knots=150\n", encoding="utf-8")
+        installer.install(build, "mac", sim)
+        self.assertEqual(config.read_text(), "[General]\nreference_speed_knots=150\n")
         for plugin in installer.PLUGINS:
             target = sim / "Resources/plugins" / plugin / "64"
             self.assertEqual((target / "mac.xpl").read_bytes(), b"new mac plugin")
             self.assertEqual((target / "lin.xpl").read_bytes(), b"linux plugin")
             backups = list(target.glob("mac.xpl.backup-*"))
-            self.assertEqual(len(backups), 1)
-            self.assertEqual(backups[0].read_bytes(), b"old mac plugin")
+            self.assertEqual(len(backups), 2)
+            self.assertEqual({backup.read_bytes() for backup in backups}, {b"old mac plugin", b"new mac plugin"})
 
     def test_missing_build_fails_before_installing(self):
         sim = self.simulator("X-Plane 12")
         with self.assertRaises(ValueError):
             installer.install(self.home / "missing", "mac", sim)
+        self.assertFalse((sim / "Resources/plugins/g940FF").exists())
+
+    def test_missing_config_fails_before_installing_binaries(self):
+        sim = self.simulator("X-Plane 12")
+        build = self.home / "build"
+        for plugin in installer.PLUGINS:
+            folder = build / plugin / "64"
+            folder.mkdir(parents=True)
+            (folder / "mac.xpl").write_bytes(b"plugin")
+        with self.assertRaisesRegex(ValueError, "aircraft.ini"):
+            installer.install(build, "mac", sim)
         self.assertFalse((sim / "Resources/plugins/g940FF").exists())

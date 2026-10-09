@@ -12,8 +12,8 @@ centers; **g940LEDs** displays aircraft state on the eight throttle button LEDs.
 
 Both plugins build on all three platforms. The preceding `feature/mac` model
 operated on macOS in X-Plane 12; Windows/Linux hardware validation remains pending.
-This experimental `feature/realism` model targets the tested TB10/TB20 and needs
-flight validation. Spring stiffness and caps grow with dynamic pressure, with
+This experimental `feature/realism` model includes General and Socata TB10/TB20
+presets and needs flight validation. Spring stiffness and caps grow with dynamic pressure, with
 gentle mechanical resistance at rest and a pressure-weighted trim equilibrium.
 The existing trim filtering, one-second pause fade and matching hands-off
 profiles are retained. Early near-center grip-release kicks reported with the
@@ -72,11 +72,12 @@ GitHub Actions builds and tests all three OSes on pushes and pull requests.
 Open a successful run on the repository's **Actions** tab and download
 `G940-X-Plane-linux-x86_64.zip`, `G940-X-Plane-windows-x86_64.zip`, or
 `G940-X-Plane-mac-universal.zip` from **Artifacts**. Each ZIP contains both
-plugins under `Resources/plugins/`, plus a license and installation instructions.
+plugins and `g940FF/aircraft.ini` under `Resources/plugins/`, plus a license and installation instructions.
 With X-Plane closed, back up existing G940 plugins, then merge the archive's
 `Resources` folder into your X-Plane installation. The Mac build contains both
 Intel and Apple Silicon binaries. Linux device permissions and LED driver
-requirements below still apply.
+requirements below still apply. Keep your existing `g940FF/aircraft.ini` when
+upgrading from an archive so your tuning is preserved.
 
 For installation from source, close X-Plane, then run:
 
@@ -86,7 +87,8 @@ make install XP_INSTALL_PATH="/path/to/X-Plane 12"
 
 Windows paths such as `C:/X-Plane 12` work from UCRT64. Both plugins are copied
 to `Resources/plugins/<plugin>/64/`, backing up existing binaries and retaining
-other platforms' binaries. Without an explicit path the installer searches
+other platforms' binaries. The installer copies `aircraft.ini` for a new installation
+and preserves an existing configuration. Without an explicit path it searches
 X-Plane 12 hints, then 11 hints, skips stale paths and accepts multiple lines:
 
 | Platform | Primary hint directory |
@@ -108,9 +110,45 @@ feedback needs read/write access to `/dev/input/event*`; LEDs need the original
 [G940 kernel patches](https://github.com/chrisboyle/G940-linux) or equivalent
 `/sys/class/leds/g940:*` driver support and write permission.
 
+## Aircraft profiles
+
+Edit `Resources/plugins/g940FF/aircraft.ini`, beside the `64` folder. The
+[supplied configuration](aircraft.ini) includes `[General]` and `[Socata TB10/TB20]`.
+The plugin first matches the aircraft's ICAO code, then its `.acf` filename;
+matches ignore ASCII case. Socata recognizes `TOBA`/`TRIN` and TB10/TB20 filenames,
+including the combined aircraft used in testing. Other aircraft use General.
+Additional sections inherit General settings and can define `match_icao` (comma
+separated exact codes) and `match_acf` (comma separated `*`/`?` filename patterns).
+When multiple presets match at the same level, the first in the file wins.
+
+Live dynamic pressure, trim fractions and AoA come from X-Plane. General uses
+`reference_speed_knots = auto` to read the aircraft's Vne as a provisional
+pressure-scaling reference. Vne describes a speed limit, so this is a tuning
+heuristic; converting its indicated speed to pressure uses the low-Mach IAS/EAS
+approximation. An explicit numeric value is equivalent airspeed in knots. Socata
+keeps the initial adjustable 125-knot reference. Missing/invalid Vne uses
+`fallback_reference_speed_knots`. This does not provide realistic jet artificial
+feel without further aircraft-specific modeling and calibration.
+
+Mechanical resistance, trim gains, pitch AoA gain and neutral AoA are configured
+because X-Plane does not supply the corresponding G940 force calibration.
+General trim gains are 1 because the simulator's live trim values already
+represent fractions of control deflection; Socata retains gains 3/1.5.
+For example, change `reference_speed_knots = 150` in the Socata section to reach
+maximum stiffness at 150 KEAS, or change `pitch_trim_gain` to adjust trim pressure.
+The existing motor coefficient and force ceilings still bound every profile.
+
+Profiles change automatically when the user's aircraft loads; AI aircraft
+notifications are ignored. To reload edits, disable/re-enable g940FF in Plugin
+Admin. `Log.txt` shows the selected profile and reference source. A missing file
+uses General defaults. Malformed, duplicate, unknown or out-of-range settings
+prevent enabling force feedback and report the offending setting in the log.
+Numeric ranges are documented in the [protocol](tools/PROTOCOL.md#aircraft-configuration).
+
 ## Test and diagnose
 
-`make test` checks pressure scaling, trim equilibrium, packet encoding, filtering, invalid inputs, pause fades,
+`make test` checks profile parsing/selection/reload, simulator reference fallback,
+pressure scaling, trim equilibrium, packet encoding, filtering, invalid inputs, pause fades,
 dataref types, lifecycle/reconnection, native backup/rollback/restoration and
 installation without moving hardware. Only the test runners keep assertions
 enabled when testing release builds. CI runs these checks and validates the

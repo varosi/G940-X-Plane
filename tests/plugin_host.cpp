@@ -6,12 +6,17 @@
 #include "XPLMPlugin.h"
 #include "XPLMDataAccess.h"
 #include "XPLMProcessing.h"
+#include "XPLMPlanes.h"
 #include "XPLMUtilities.h"
 #include "g940Backend.h"
 #include "g940ForceModel.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <chrono>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <string>
 
@@ -19,10 +24,11 @@ PLUGIN_API int XPluginStart(char *, char *, char *);
 PLUGIN_API int XPluginEnable();
 PLUGIN_API void XPluginDisable();
 PLUGIN_API void XPluginStop();
+PLUGIN_API void XPluginReceiveMessage(XPLMPluginID, int, void *);
 
 namespace {
-enum Type { DATA_INTEGER, DATA_FLOAT, DATA_INTEGERS, DATA_FLOATS };
-struct Ref { Type type; float value; };
+enum Type { DATA_INTEGER, DATA_FLOAT, DATA_INTEGERS, DATA_FLOATS, DATA_BYTES };
+struct Ref { Type type; float value; std::string text = {}; };
 std::map<std::string, Ref> refs;
 XPLMFlightLoop_f callback = nullptr;
 int registrations = 0, unregistrations = 0;
@@ -30,6 +36,8 @@ int opens = 0, closes = 0;
 int releases = 0;
 bool deviceOpen = false, allowOpen = true, allowUpdate = true;
 bool missingRef = false;
+bool nativePaths = false;
+std::string pluginFile, aircraftFile = "JF_Socata_TB10+TB20.acf", debugLog;
 g940::LEDState observedLEDs;
 g940::ForceState observedForce;
 Ref& ref(XPLMDataRef data) { assert(data); return *static_cast<Ref *>(data); }
@@ -39,11 +47,30 @@ extern "C" {
 XPLMDataRef XPLMFindDataRef(const char *name) {
     if (missingRef) return nullptr;
     auto entry = refs.find(name);
-    assert(entry != refs.end());
-    return &entry->second;
+    return entry == refs.end() ? nullptr : &entry->second;
+}
+XPLMPluginID XPLMGetMyID() { return 1; }
+void XPLMEnableFeature(const char *feature, int enable) {
+    assert(std::strcmp(feature, "XPLM_USE_NATIVE_PATHS") == 0 && enable == 1);
+    nativePaths = true;
+}
+void XPLMGetPluginInfo(XPLMPluginID id, char *, char *path, char *, char *) {
+    assert(id == 1 && nativePaths);
+    std::strcpy(path, pluginFile.c_str());
+}
+void XPLMGetNthAircraftModel(int index, char *name, char *path) {
+    assert(index == 0 && nativePaths);
+    std::strcpy(name, aircraftFile.c_str());
+    std::strcpy(path, ("/Aircraft/" + aircraftFile).c_str());
 }
 int XPLMGetDatai(XPLMDataRef data) { assert(ref(data).type == DATA_INTEGER); return ref(data).value; }
 float XPLMGetDataf(XPLMDataRef data) { assert(ref(data).type == DATA_FLOAT); return ref(data).value; }
+int XPLMGetDatab(XPLMDataRef data, void *out, int offset, int count) {
+    assert(ref(data).type == DATA_BYTES && offset == 0);
+    const int copied = std::min(count, static_cast<int>(ref(data).text.size()));
+    if (out) std::memcpy(out, ref(data).text.data(), copied);
+    return out ? copied : ref(data).text.size();
+}
 int XPLMGetDatavi(XPLMDataRef data, int *out, int offset, int count) {
     assert(ref(data).type == DATA_INTEGERS && offset == 0 && count == 1);
     *out = ref(data).value; return 1;
@@ -58,7 +85,7 @@ void XPLMRegisterFlightLoopCallback(XPLMFlightLoop_f flightLoop, float, void *) 
 void XPLMUnregisterFlightLoopCallback(XPLMFlightLoop_f flightLoop, void *) {
     assert(callback == flightLoop); callback = nullptr; ++unregistrations;
 }
-void XPLMDebugString(const char *) {}
+void XPLMDebugString(const char *text) { debugLog += text; }
 }
 
 namespace g940 {
@@ -98,10 +125,19 @@ int main() {
         {"sim/flightmodel2/controls/speedbrake_ratio", {DATA_FLOAT, .75}}
     };
 #else
+    const auto configRoot = std::filesystem::temp_directory_path() /
+        ("g940-host-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto configFolder = configRoot / u8"G940 profiles é" / "g940FF";
+    std::filesystem::create_directories(configFolder / "64");
+    std::filesystem::copy_file("aircraft.ini", configFolder / "aircraft.ini");
+    const auto pluginPath = (configFolder / "64/mac.xpl").generic_u8string();
+    pluginFile.assign(pluginPath.begin(), pluginPath.end());
     refs = {
         {"sim/joystick/yoke_roll_ratio", {DATA_FLOAT, .1}},
         {"sim/joystick/yoke_pitch_ratio", {DATA_FLOAT, .2}},
-        {"sim/flightmodel/misc/Qstatic", {DATA_FLOAT, g940::tb10tb20Profile.referencePressurePa / (2 * g940::pascalsPerPsf)}},
+        {"sim/flightmodel/misc/Qstatic", {DATA_FLOAT, g940::defaultProfile.referencePressurePa / (2 * g940::pascalsPerPsf)}},
+        {"sim/aircraft/view/acf_Vne", {DATA_FLOAT, 187}},
+        {"sim/aircraft/view/acf_ICAO", {DATA_BYTES, 0, "TOBA"}},
         {"sim/flightmodel/position/alpha", {DATA_FLOAT, 5}},
         {"sim/flightmodel2/controls/elevator_trim", {DATA_FLOAT, .1}},
         {"sim/flightmodel2/controls/aileron_trim", {DATA_FLOAT, 0}},
@@ -146,7 +182,7 @@ int main() {
     refs["sim/time/paused"].value = 0;
     callback(0, 0, 0, nullptr);
     assert(deviceOpen);
-    refs["sim/flightmodel/misc/Qstatic"].value = g940::tb10tb20Profile.referencePressurePa / (2 * g940::pascalsPerPsf);
+    refs["sim/flightmodel/misc/Qstatic"].value = g940::defaultProfile.referencePressurePa / (2 * g940::pascalsPerPsf);
     refs["sim/flightmodel/position/alpha"].value = 5;
     refs["sim/flightmodel2/controls/elevator_trim"].value = .1;
     for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
@@ -173,6 +209,20 @@ int main() {
     assert(std::abs(observedForce.pitch - .2f) < .00001f);
     assert(std::abs(observedForce.roll + .2f) < .00001f);
     assert(observedForce.effectScale <= .020001f);
+    for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+    refs["sim/aircraft/view/acf_ICAO"].text = "B738";
+    refs["sim/aircraft/view/acf_Vne"].value = 340;
+    aircraftFile = "Boeing 737.acf";
+    XPluginReceiveMessage(XPLM_PLUGIN_XPLANE, XPLM_MSG_PLANE_LOADED, reinterpret_cast<void *>(1));
+    callback(.02f, 0, 0, nullptr);
+    assert(std::abs(observedForce.pressureRatio - .6f) < .001); // ignore AI plane changes
+    XPluginReceiveMessage(XPLM_PLUGIN_XPLANE, XPLM_MSG_PLANE_LOADED, nullptr);
+    callback(.02f, 0, 0, nullptr);
+    assert(observedForce.effectScale <= .020001f && observedForce.pressureRatio <= .020001f);
+    for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+    assert(std::abs(observedForce.pressureRatio - .2540657f) < .001); // General at Vne=340
+    assert(debugLog.find("profile 'General' for Boeing 737.acf") != std::string::npos);
+    assert(debugLog.find("340.0 kt (X-Plane Vne scaling)") != std::string::npos);
 #endif
     allowUpdate = false;
     assert(callback(0, 0, 0, nullptr) == 5.0f);
@@ -189,6 +239,29 @@ int main() {
     callback(0, 0, 0, nullptr);
     XPluginStop();
     assert(!callback && !deviceOpen && registrations == 2 && unregistrations == 2);
+#ifndef TEST_LEDS
+    std::ofstream(configFolder / "aircraft.ini") << "[General]\nreference_speed_knots=150\npitch_aoa_gain=0\n";
+    assert(XPluginEnable() == 1);
+    for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+    assert(std::abs(observedForce.pressureRatio - .4777778f) < .001); // reread config on enable
+    assert(observedForce.pitch > 0);
+    XPluginDisable();
+    const int registrationsBeforeBadConfig = registrations;
+    std::ofstream(configFolder / "aircraft.ini") << "[General]\nmechanical_ratio=nan\n";
+    assert(XPluginEnable() == 0 && !callback && !deviceOpen);
+    assert(registrations == registrationsBeforeBadConfig);
+    assert(debugLog.find("line 2 [General]") != std::string::npos);
+    std::filesystem::remove(configFolder / "aircraft.ini");
+    refs.erase("sim/aircraft/view/acf_ICAO");
+    refs.erase("sim/aircraft/view/acf_Vne");
+    assert(XPluginStart(name, signature, description) == 1); // optional metadata absent
+    assert(XPluginEnable() == 1);
+    for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+    assert(std::abs(observedForce.pressureRatio - .6f) < .001); // built-in reference fallback
+    assert(debugLog.find("aircraft.ini missing") != std::string::npos);
+    XPluginStop();
+    std::filesystem::remove_all(configRoot);
+#endif
     std::puts("Dataref types, reconnect, pause, and plugin lifecycle passed.");
 }
 

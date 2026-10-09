@@ -9,6 +9,18 @@ import tempfile
 
 PLUGINS = ("g940FF", "g940LEDs")
 FILENAMES = {"mac": "mac.xpl", "linux": "lin.xpl", "windows": "win.xpl"}
+CONFIG_FILES = (("g940FF", "aircraft.ini"),)
+
+
+def build_files(build_dir, platform):
+    """Return all bundle files and whether installation preserves existing copies."""
+    files = [(Path(plugin) / "64" / FILENAMES[platform], False) for plugin in PLUGINS]
+    files += [(Path(plugin) / filename, True) for plugin, filename in CONFIG_FILES]
+    sources = [(Path(build_dir) / relative, relative, preserve) for relative, preserve in files]
+    for source, _, _ in sources:
+        if not source.is_file():
+            raise ValueError(f"Plugin bundle file missing: {source}")
+    return sources
 
 
 def hint_files(home, platform, version):
@@ -52,16 +64,16 @@ def find_installation(platform, explicit=None, hint=None, home=None):
 
 
 def install(build_dir, platform, destination):
-    filename = FILENAMES[platform]
-    sources = [Path(build_dir) / plugin / "64" / filename for plugin in PLUGINS]
-    for source in sources:
-        if not source.is_file():
-            raise ValueError(f"Plugin has not been built: {source}")
+    sources = build_files(build_dir, platform)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    for plugin, source in zip(PLUGINS, sources):
-        folder = destination / "Resources/plugins" / plugin / "64"
+    for source, relative, preserve in sources:
+        target = destination / "Resources/plugins" / relative
+        if preserve and target.exists():
+            print(f"Kept existing configuration: {target}")
+            continue
+        folder = target.parent
+        filename = target.name
         folder.mkdir(parents=True, exist_ok=True)
-        target = folder / filename
         if target.exists():
             backup = target.with_name(f"{filename}.backup-{timestamp}")
             shutil.copy2(target, backup)
