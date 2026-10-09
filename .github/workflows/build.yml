@@ -45,9 +45,11 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-python
       - name: Build both plugins
-        run: make -j2 PLATFORM=${{ matrix.platform }}
+        run: make -j2 PLATFORM=${{ matrix.platform }} BUILD_TYPE=release
       - name: Test protocol, datarefs, lifecycle, installation and packaging
-        run: make test PLATFORM=${{ matrix.platform }}
+        run: make test PLATFORM=${{ matrix.platform }} BUILD_TYPE=release
+      - name: Build debug plugins separately
+        run: make -j2 PLATFORM=${{ matrix.platform }} BUILD_TYPE=debug BUILDDIR=build/debug CPPFLAGS=-DG940_DEBUG_FORCE=1
       - name: Package for X-Plane
         run: python3 -m tools.package --platform ${{ matrix.platform }} --output build/dist/G940-X-Plane-${{ matrix.platform }}-${{ matrix.arch }}.zip
       - uses: actions/upload-artifact@v7

@@ -34,6 +34,12 @@ make -j2
 make test
 ```
 
+Plain `make` selects `BUILD_TYPE=release`: optimized plugins without assertions,
+debug information or force traces. Use `make BUILD_TYPE=debug` for an unoptimized
+build with assertions and debug information, and pass the same `BUILD_TYPE`
+to `make install` when installing it. CI packages only release plugins and
+also checks that debug plugins compile on all three OSes.
+
 The Makefile detects the host; `PLATFORM=mac|linux|windows` selects an explicit
 target. The SDK calls its platform macros `APL` (macOS), `IBM` (Windows) and
 `LIN` (Linux); the Makefile sets the selected macro to 1 and the others to 0.
@@ -52,9 +58,11 @@ framework, Windows its import library; Linux resolves SDK symbols in X-Plane.
 No handwritten SDK replacements or XPLM stubs are linked.
 
 Outputs are `build/{g940FF,g940LEDs}/64/{mac,win,lin}.xpl`; objects are separated
-by OS and architecture. `MAC_ARCHS=arm64` or `MAC_ARCHS=x86_64` selects one Mac
-architecture; plain `make` restores universal output. Run `make clean` when
-changing compilers, SDK paths or flags. Clean preserves `build/previous-sdk-stubs`.
+by OS, architecture and build type. Switching release/debug rebuilds or selects
+the corresponding objects automatically. `MAC_ARCHS=arm64` or `MAC_ARCHS=x86_64`
+selects one Mac architecture; plain `make` restores universal output. Run
+`make clean` when changing compilers, SDK paths or flags. Clean preserves
+`build/previous-sdk-stubs`.
 
 ## Install
 
@@ -102,9 +110,9 @@ feedback needs read/write access to `/dev/input/event*`; LEDs need the original
 
 `make test` checks packet encoding, trim filtering, invalid inputs, pause fades,
 dataref types, lifecycle/reconnection, native backup/rollback/restoration and
-installation without moving hardware. Assertions stay enabled with release
-flags. CI runs these checks and validates the installable ZIP layout on all
-three OSes. Create the same archive locally with:
+installation without moving hardware. Only the test runners keep assertions
+enabled when testing release builds. CI runs these checks and validates the
+installable ZIP layout on all three OSes. Create the same archive locally with:
 
 ```sh
 python3 -m tools.package --platform mac --output build/dist/G940-X-Plane-mac-universal.zip
@@ -114,8 +122,8 @@ Use `--platform linux` or `--platform windows` for those builds.
 For optional force traces every two seconds, use a separate build directory:
 
 ```sh
-make BUILDDIR=build/force-debug CPPFLAGS=-DG940_DEBUG_FORCE=1
-make install BUILDDIR=build/force-debug CPPFLAGS=-DG940_DEBUG_FORCE=1 XP_INSTALL_PATH="/path/to/X-Plane 12"
+make BUILD_TYPE=debug BUILDDIR=build/force-debug CPPFLAGS=-DG940_DEBUG_FORCE=1
+make install BUILD_TYPE=debug BUILDDIR=build/force-debug CPPFLAGS=-DG940_DEBUG_FORCE=1 XP_INSTALL_PATH="/path/to/X-Plane 12"
 ```
 
 Traces include airspeed/Vne, yoke inputs, trim, AoA, centers, saturation and
