@@ -211,6 +211,30 @@ Omitting the keys preserves the original mapping:
 | P7 | `landing_lights` | Landing-light status, for non-gliders |
 | P8 | `gear` | First gear deployment, for retractable gear |
 
+Additional built-ins can be assigned to any P1–P8 slot; the supplied defaults
+remain unchanged:
+
+| Assignment | Indication |
+| --- | --- |
+| `engine_running` | Green when all configured engines are running, red when all are stopped, amber for a mixed state |
+| `navigation_lights` | Green on, red off |
+| `parking_brake` | Parking control: green released, amber partial, red fully applied or valve closed |
+| `brakes` | Largest master/left/right brake demand: green released, amber partial, red fully applied |
+
+Missing or invalid telemetry shows off. On hydraulic trapping-valve aircraft,
+`parking_brake` indicates valve position; a closed valve does not establish
+that usable brake pressure was trapped. `brakes` indicates requested input,
+which can differ from actual braking, including trapped pressure or autobrakes.
+See [Laminar's brake model](https://developer.x-plane.com/article/brakes-parking-brakes-and-wheel-chocks/).
+
+For example, replace the assignments in an existing profile with:
+
+```ini
+led_4 = engine_running
+led_7 = navigation_lights
+led_8 = parking_brake
+```
+
 Any LED can use any of these functions, or `off`, `red`, `green`, or `amber`.
 Existing functions keep their equipment checks; unavailable equipment shows off.
 Custom numeric datarefs let you display other standard or aircraft-specific states:

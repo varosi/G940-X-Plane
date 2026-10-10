@@ -9,7 +9,8 @@
 namespace g940 {
 enum class LEDFunction {
     off, red, green, amber, speedbrakeUpper, flapsUpper, carbHeat, autopilot,
-    speedbrakeLower, flapsLower, landingLights, gear, dataref
+    speedbrakeLower, flapsLower, landingLights, gear, dataref,
+    engineRunning, navigationLights, parkingBrake, brakes
 };
 struct LEDAssignment {
     LEDFunction function = LEDFunction::off;

@@ -207,12 +207,36 @@ before registering a flight callback or opening a device.
 ### LED configuration
 
 `led_1`–`led_8` assign P1–P8. Built-ins are `speedbrake_upper`, `speedbrake_lower`,
-`flaps_upper`, `flaps_lower`, `carb_heat`, `autopilot`, `landing_lights` and `gear`;
+`flaps_upper`, `flaps_lower`, `carb_heat`, `autopilot`, `landing_lights`, `gear`,
+`engine_running`, `navigation_lights`, `parking_brake` and `brakes`;
 `off`, `red`, `green` and `amber` select fixed colors. Unspecified slots retain
 the original assignments, and aircraft presets inherit General per slot.
 Travel thresholds remain 0.125/0.375 for upper and 0.625/0.875 for lower;
 carb heat/gear use red at <= 0, green at >= 1 and amber between. Built-in
 equipment/glider checks are unchanged.
+
+`engine_running` reads `sim/flightmodel2/engines/engine_is_burning_fuel`, falling
+back to `sim/flightmodel/engine/ENGN_running` when the modern ref is absent.
+`sim/aircraft/engine/acf_num_engines` limits the read to the installed engines
+(1–16). All running maps to green, all stopped to red and a mixed state to
+amber. Missing/invalid counts, invalid boolean flags or short arrays show off.
+`navigation_lights` reads `sim/cockpit2/switches/navigation_lights_on`, mapping
+on to green and off to red. Neither indication applies the older glider gates.
+
+`parking_brake` uses `sim/cockpit2/controls/park_brake_valve` for aircraft whose
+`sim/aircraft/gear/acf_park_brake_trap` is 1 or 2, indicating parking control
+position rather than trapped-pressure effectiveness. A closed valve is red
+even when no pressure was trapped. Otherwise it uses master-cylinder demand,
+preferring `sim/cockpit2/controls/wheel_brake_ratio`, then the older
+`sim/cockpit2/controls/parking_brake_ratio`, then `sim/flightmodel/controls/parkbrake`.
+Missing trapping metadata uses the older non-valve behavior; missing valve
+status on a valve-equipped aircraft or invalid metadata/status shows off.
+
+`brakes` takes the largest master, `sim/cockpit2/controls/left_brake_ratio` and
+`sim/cockpit2/controls/right_brake_ratio` demand. All three inputs must be
+available and finite. Both brake roles show green at <= 0, red at >= 1 and
+amber between. They show requested/control states, not effective tire braking
+or wheel chocks. The distinction follows [Laminar's X-Plane 12.2 brake documentation](https://developer.x-plane.com/article/brakes-parking-brakes-and-wheel-chocks/).
 
 Custom syntax is `dataref:exact/name[index]` or
 `dataref:exact/name[index], low, high`. Names preserve case. Indices are optional

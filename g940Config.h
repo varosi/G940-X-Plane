@@ -74,7 +74,9 @@ inline LEDAssignment configLEDAssignment(const std::string& text) {
         {"speedbrake_upper", LEDFunction::speedbrakeUpper}, {"flaps_upper", LEDFunction::flapsUpper},
         {"carb_heat", LEDFunction::carbHeat}, {"autopilot", LEDFunction::autopilot},
         {"speedbrake_lower", LEDFunction::speedbrakeLower}, {"flaps_lower", LEDFunction::flapsLower},
-        {"landing_lights", LEDFunction::landingLights}, {"gear", LEDFunction::gear}
+        {"landing_lights", LEDFunction::landingLights}, {"gear", LEDFunction::gear},
+        {"engine_running", LEDFunction::engineRunning}, {"navigation_lights", LEDFunction::navigationLights},
+        {"parking_brake", LEDFunction::parkingBrake}, {"brakes", LEDFunction::brakes}
     };
     if (const auto found = names.find(role); found != names.end()) return {found->second};
     if (!role.starts_with("dataref:")) throw std::runtime_error("unknown LED assignment: " + text);

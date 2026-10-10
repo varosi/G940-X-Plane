@@ -772,6 +772,201 @@ int main() {
     callback(.2f, 0, 0, nullptr);
     assert(observedLEDs[0] == g940::GREEN);
     XPluginStop();
+
+    // Engine status uses only the aircraft's configured engines. The modern
+    // channel takes precedence; a legacy channel is a missing-data fallback.
+    constexpr const char *engineCountName = "sim/aircraft/engine/acf_num_engines";
+    constexpr const char *modernRunningName = "sim/flightmodel2/engines/engine_is_burning_fuel";
+    constexpr const char *legacyRunningName = "sim/flightmodel/engine/ENGN_running";
+    constexpr const char *navigationName = "sim/cockpit2/switches/navigation_lights_on";
+    refs.emplace(engineCountName, Ref{DATA_INTEGER, 2});
+    refs.emplace(modernRunningName, Ref{DATA_INTEGERS, 0, {}, std::vector<float>(16, 0)});
+    refs.emplace(legacyRunningName, Ref{DATA_INTEGERS, 0, {}, std::vector<float>(16, 1)});
+    refs.emplace(navigationName, Ref{DATA_INTEGER, 0});
+    const char *statusConfiguration = "[General]\nled_1=engine_running\nled_2=navigation_lights\n"
+        "led_3=off\nled_4=green\nled_5=off\nled_6=off\nled_7=off\nled_8=off\n";
+    const auto expectStatusLEDs = [&](g940::LEDColour engines, g940::LEDColour navigation) {
+        callback(.2f, 0, 0, nullptr);
+        assert(observedLEDs[0] == engines && observedLEDs[1] == navigation);
+        assert(observedLEDs[3] == g940::GREEN);
+    };
+    configureLEDs(statusConfiguration);
+    expectStatusLEDs(g940::RED, g940::RED); // contradictory legacy values are ignored
+    refs[modernRunningName].values[0] = 1;
+    expectStatusLEDs(g940::AMBER, g940::RED);
+    refs[modernRunningName].values[1] = 1;
+    refs[modernRunningName].values[15] = 2; // unused slots are not aircraft engines
+    refs[navigationName].value = 1;
+    expectStatusLEDs(g940::GREEN, g940::GREEN);
+    refs["sim/aircraft2/metadata/is_glider"].value = 1;
+    expectStatusLEDs(g940::GREEN, g940::GREEN); // these roles have no glider gate
+    refs["sim/aircraft2/metadata/is_glider"].value = 0;
+    refs[modernRunningName].values[0] = 2;
+    expectStatusLEDs(g940::OFF, g940::GREEN);
+    refs[modernRunningName].values[0] = 1;
+    for (float invalidCount : {0.0f, -1.0f, 17.0f}) {
+        refs[engineCountName].value = invalidCount;
+        expectStatusLEDs(g940::OFF, g940::GREEN);
+    }
+    refs[engineCountName].value = 16;
+    refs[modernRunningName].values.assign(16, 1);
+    expectStatusLEDs(g940::GREEN, g940::GREEN);
+    refs[engineCountName].value = 2;
+    refs[modernRunningName].values.resize(1);
+    expectStatusLEDs(g940::OFF, g940::GREEN); // short modern data must not use legacy
+    refs[modernRunningName].values.assign(16, 1);
+
+    XPluginStop();
+    const Ref savedEngineCount = refs.at(engineCountName);
+    refs.erase(engineCountName);
+    configureLEDs(statusConfiguration);
+    expectStatusLEDs(g940::OFF, g940::GREEN);
+    XPluginStop();
+    refs.emplace(engineCountName, savedEngineCount);
+    const Ref savedModernRunning = refs.at(modernRunningName);
+    refs.erase(modernRunningName);
+    configureLEDs(statusConfiguration);
+    expectStatusLEDs(g940::GREEN, g940::GREEN);
+    refs[legacyRunningName].values[1] = 0;
+    expectStatusLEDs(g940::AMBER, g940::GREEN);
+    refs[legacyRunningName].values[0] = 0;
+    refs[navigationName].value = 0;
+    expectStatusLEDs(g940::RED, g940::RED);
+    refs[legacyRunningName].values.resize(1);
+    expectStatusLEDs(g940::OFF, g940::RED);
+    XPluginStop();
+    refs.erase(legacyRunningName);
+    configureLEDs(statusConfiguration);
+    expectStatusLEDs(g940::OFF, g940::RED);
+    XPluginStop();
+    refs.emplace(modernRunningName, savedModernRunning);
+    const Ref savedNavigation = refs.at(navigationName);
+    refs.erase(navigationName);
+    configureLEDs(statusConfiguration);
+    expectStatusLEDs(g940::GREEN, g940::OFF); // missing lights leave other roles working
+    XPluginStop();
+    refs.emplace(navigationName, savedNavigation);
+
+    // Parking brakes indicate either master demand or the trapping valve;
+    // combined brakes also include the independent left/right pedal demands.
+    constexpr const char *masterBrakeName = "sim/cockpit2/controls/wheel_brake_ratio";
+    constexpr const char *parkingBrakeName = "sim/cockpit2/controls/parking_brake_ratio";
+    constexpr const char *legacyBrakeName = "sim/flightmodel/controls/parkbrake";
+    constexpr const char *leftBrakeName = "sim/cockpit2/controls/left_brake_ratio";
+    constexpr const char *rightBrakeName = "sim/cockpit2/controls/right_brake_ratio";
+    constexpr const char *brakeTrapName = "sim/aircraft/gear/acf_park_brake_trap";
+    constexpr const char *brakeValveName = "sim/cockpit2/controls/park_brake_valve";
+    refs.emplace(masterBrakeName, Ref{DATA_FLOAT, 0});
+    refs.emplace(parkingBrakeName, Ref{DATA_FLOAT, 1});
+    refs.emplace(legacyBrakeName, Ref{DATA_FLOAT, 1});
+    refs.emplace(leftBrakeName, Ref{DATA_FLOAT, 0});
+    refs.emplace(rightBrakeName, Ref{DATA_FLOAT, 0});
+    refs.emplace(brakeTrapName, Ref{DATA_INTEGER, 0});
+    refs.emplace(brakeValveName, Ref{DATA_INTEGER, 0});
+    const char *brakeConfiguration = "[General]\nled_1=parking_brake\nled_2=brakes\n"
+        "led_3=off\nled_4=green\nled_5=off\nled_6=off\nled_7=off\nled_8=off\n";
+    const auto expectBrakeLEDs = [&](g940::LEDColour parking, g940::LEDColour brakes) {
+        callback(.2f, 0, 0, nullptr);
+        assert(observedLEDs[0] == parking && observedLEDs[1] == brakes);
+        assert(observedLEDs[3] == g940::GREEN);
+    };
+    configureLEDs(brakeConfiguration);
+    expectBrakeLEDs(g940::GREEN, g940::GREEN); // modern zero overrides legacy demands
+    refs[masterBrakeName].value = .5f;
+    expectBrakeLEDs(g940::AMBER, g940::AMBER);
+    refs[masterBrakeName].value = 1;
+    expectBrakeLEDs(g940::RED, g940::RED);
+    refs[masterBrakeName].value = 1.5f;
+    expectBrakeLEDs(g940::RED, g940::RED);
+    refs[masterBrakeName].value = -.5f;
+    expectBrakeLEDs(g940::GREEN, g940::GREEN);
+    refs[masterBrakeName].value = 0;
+    refs[leftBrakeName].value = .3f;
+    expectBrakeLEDs(g940::GREEN, g940::AMBER);
+    refs[rightBrakeName].value = 1;
+    expectBrakeLEDs(g940::GREEN, g940::RED);
+    refs[leftBrakeName].value = refs[rightBrakeName].value = 0;
+    for (float trap : {1.0f, 2.0f}) {
+        refs[brakeTrapName].value = trap;
+        refs[brakeValveName].value = 1;
+        expectBrakeLEDs(g940::RED, g940::GREEN); // closed even without master pressure
+        refs[masterBrakeName].value = 1;
+        refs[brakeValveName].value = 0;
+        expectBrakeLEDs(g940::GREEN, g940::RED); // open even with braking demand
+        refs[masterBrakeName].value = 0;
+        for (float invalidValve : {-1.0f, 2.0f}) {
+            refs[brakeValveName].value = invalidValve;
+            expectBrakeLEDs(g940::OFF, g940::GREEN);
+        }
+    }
+    refs[brakeValveName].value = 0;
+    for (float invalidTrap : {-1.0f, 3.0f}) {
+        refs[brakeTrapName].value = invalidTrap;
+        expectBrakeLEDs(g940::OFF, g940::GREEN);
+    }
+    refs[brakeTrapName].value = 0;
+    for (const char *input : {masterBrakeName, leftBrakeName, rightBrakeName}) {
+        for (float invalidDemand : {badLEDValue, std::numeric_limits<float>::infinity(),
+                                   -std::numeric_limits<float>::infinity()}) {
+            refs[input].value = invalidDemand;
+            expectBrakeLEDs(input == masterBrakeName ? g940::OFF : g940::GREEN, g940::OFF);
+        }
+        refs[input].value = 0;
+    }
+
+    XPluginStop();
+    const Ref savedBrakeTrap = refs.at(brakeTrapName);
+    refs.erase(brakeTrapName);
+    refs[masterBrakeName].value = .5f;
+    configureLEDs(brakeConfiguration);
+    expectBrakeLEDs(g940::AMBER, g940::AMBER); // old simulators have no trapping metadata
+    XPluginStop();
+    refs.emplace(brakeTrapName, savedBrakeTrap);
+    const Ref savedBrakeValve = refs.at(brakeValveName);
+    refs.erase(brakeValveName);
+    refs[brakeTrapName].value = 1;
+    configureLEDs(brakeConfiguration);
+    expectBrakeLEDs(g940::OFF, g940::AMBER);
+    refs[brakeTrapName].value = 0;
+    expectBrakeLEDs(g940::AMBER, g940::AMBER); // ordinary brakes do not require a valve
+    XPluginStop();
+    refs.emplace(brakeValveName, savedBrakeValve);
+    refs.erase(masterBrakeName);
+    refs[parkingBrakeName].value = .25f;
+    configureLEDs(brakeConfiguration);
+    expectBrakeLEDs(g940::AMBER, g940::AMBER); // cockpit2 legacy precedes flightmodel legacy
+    refs[parkingBrakeName].value = 0;
+    expectBrakeLEDs(g940::GREEN, g940::GREEN);
+    XPluginStop();
+    refs.erase(parkingBrakeName);
+    configureLEDs(brakeConfiguration);
+    expectBrakeLEDs(g940::RED, g940::RED);
+    refs[legacyBrakeName].value = .5f;
+    expectBrakeLEDs(g940::AMBER, g940::AMBER);
+    refs[legacyBrakeName].value = 0;
+    expectBrakeLEDs(g940::GREEN, g940::GREEN);
+    XPluginStop();
+    refs.erase(legacyBrakeName);
+    refs[brakeTrapName].value = 1;
+    refs[brakeValveName].value = 1;
+    configureLEDs(brakeConfiguration);
+    expectBrakeLEDs(g940::RED, g940::OFF); // valve position does not require master demand
+    refs[brakeTrapName].value = 0;
+    expectBrakeLEDs(g940::OFF, g940::OFF); // ordinary parking requires a master channel
+    XPluginStop();
+    refs.emplace(masterBrakeName, Ref{DATA_FLOAT, 0});
+    refs[brakeTrapName].value = refs[brakeValveName].value = 0;
+    const Ref savedLeftBrake = refs.at(leftBrakeName), savedRightBrake = refs.at(rightBrakeName);
+    refs.erase(leftBrakeName);
+    configureLEDs(brakeConfiguration);
+    expectBrakeLEDs(g940::GREEN, g940::OFF);
+    XPluginStop();
+    refs.emplace(leftBrakeName, savedLeftBrake);
+    refs.erase(rightBrakeName);
+    configureLEDs(brakeConfiguration);
+    expectBrakeLEDs(g940::GREEN, g940::OFF);
+    XPluginStop();
+    refs.emplace(rightBrakeName, savedRightBrake);
 #endif
     std::filesystem::remove_all(configRoot);
     std::puts("Dataref types, reconnect, pause, and plugin lifecycle passed.");

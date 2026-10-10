@@ -17,6 +17,9 @@
 namespace {
 XPLMDataRef autopilotRef, engTypeRef, gliderRef, carbHeatRef, haveFlapsRef,
     flapsRef, isRetractRef, gearRef, landLightRef, haveSbrkRef, speedBrakeRef, icaoRef;
+XPLMDataRef engineRunningRef, legacyEngineRunningRef, engineCountRef, navigationLightsRef;
+XPLMDataRef masterBrakeRef, oldMasterBrakeRef, legacyBrakeRef, leftBrakeRef, rightBrakeRef,
+    parkingBrakeTrapRef, parkingBrakeValveRef;
 std::filesystem::path configFile;
 std::vector<g940::ConfigProfile> profiles;
 g940::LEDAssignments assignments;
@@ -37,6 +40,10 @@ g940::LEDColour topHalf(float value) {
 g940::LEDColour bottomHalf(float value) {
     return !std::isfinite(value) ? g940::OFF :
         value <= 0.625f ? g940::RED : value <= 0.875f ? g940::AMBER : g940::GREEN;
+}
+g940::LEDColour brakeColour(float value) {
+    return !std::isfinite(value) ? g940::OFF :
+        value <= 0.0f ? g940::GREEN : value >= 1.0f ? g940::RED : g940::AMBER;
 }
 bool on(XPLMDataRef ref) { return ref && XPLMGetDatai(ref) != 0; }
 float arrayValue(XPLMDataRef ref) {
@@ -80,7 +87,18 @@ void resolveBindings() {
         {&flapsRef, "sim/cockpit2/controls/flap_handle_deploy_ratio"},
         {&gearRef, "sim/flightmodel2/gear/deploy_ratio"},
         {&landLightRef, "sim/cockpit/electrical/landing_lights_on"},
-        {&speedBrakeRef, "sim/flightmodel2/controls/speedbrake_ratio"}
+        {&speedBrakeRef, "sim/flightmodel2/controls/speedbrake_ratio"},
+        {&engineRunningRef, "sim/flightmodel2/engines/engine_is_burning_fuel"},
+        {&legacyEngineRunningRef, "sim/flightmodel/engine/ENGN_running"},
+        {&engineCountRef, "sim/aircraft/engine/acf_num_engines"},
+        {&navigationLightsRef, "sim/cockpit2/switches/navigation_lights_on"},
+        {&masterBrakeRef, "sim/cockpit2/controls/wheel_brake_ratio"},
+        {&oldMasterBrakeRef, "sim/cockpit2/controls/parking_brake_ratio"},
+        {&legacyBrakeRef, "sim/flightmodel/controls/parkbrake"},
+        {&leftBrakeRef, "sim/cockpit2/controls/left_brake_ratio"},
+        {&rightBrakeRef, "sim/cockpit2/controls/right_brake_ratio"},
+        {&parkingBrakeTrapRef, "sim/aircraft/gear/acf_park_brake_trap"},
+        {&parkingBrakeValveRef, "sim/cockpit2/controls/park_brake_valve"}
     };
     missingBindings = false;
     for (const auto& reference : references) {
@@ -152,6 +170,43 @@ g940::LEDColour customColour(unsigned led) {
     return g940::datarefLEDColour(value, assignment);
 }
 
+g940::LEDColour engineColour() {
+    const int count = engineCountRef ? XPLMGetDatai(engineCountRef) : 0;
+    const auto ref = engineRunningRef ? engineRunningRef : legacyEngineRunningRef;
+    std::array<int, 16> running{};
+    if (count < 1 || count > static_cast<int>(running.size()) || !ref ||
+        XPLMGetDatavi(ref, running.data(), 0, count) != count) return g940::OFF;
+    int started = 0;
+    for (int engine = 0; engine < count; ++engine) {
+        if (running[engine] != 0 && running[engine] != 1) return g940::OFF;
+        started += running[engine];
+    }
+    return started == 0 ? g940::RED : started == count ? g940::GREEN : g940::AMBER;
+}
+
+float masterBrake() {
+    const auto ref = masterBrakeRef ? masterBrakeRef : oldMasterBrakeRef ? oldMasterBrakeRef : legacyBrakeRef;
+    return ref ? XPLMGetDataf(ref) : std::numeric_limits<float>::quiet_NaN();
+}
+
+g940::LEDColour parkingBrakeColour() {
+    const int trap = parkingBrakeTrapRef ? XPLMGetDatai(parkingBrakeTrapRef) : 0;
+    if (trap < 0 || trap > 2) return g940::OFF;
+    if (trap == 0) return brakeColour(masterBrake());
+    if (!parkingBrakeValveRef) return g940::OFF;
+    const int closed = XPLMGetDatai(parkingBrakeValveRef);
+    // This shows the parking control, not whether a closed valve trapped
+    // usable pressure. Do not replace its status with current pedal demand.
+    return closed == 0 ? g940::GREEN : closed == 1 ? g940::RED : g940::OFF;
+}
+
+g940::LEDColour brakesColour() {
+    if (!leftBrakeRef || !rightBrakeRef) return g940::OFF;
+    const float master = masterBrake(), left = XPLMGetDataf(leftBrakeRef), right = XPLMGetDataf(rightBrakeRef);
+    if (!std::isfinite(master) || !std::isfinite(left) || !std::isfinite(right)) return g940::OFF;
+    return brakeColour(std::max({master, left, right}));
+}
+
 g940::LEDColour colour(unsigned led) {
     using enum g940::LEDFunction;
     switch (assignments.at(led).function) {
@@ -171,6 +226,10 @@ g940::LEDColour colour(unsigned led) {
     }
     case autopilot: return gliderRef && !on(gliderRef) && autopilotRef ? greenOn(on(autopilotRef)) : g940::OFF;
     case landingLights: return gliderRef && !on(gliderRef) && landLightRef ? greenOn(on(landLightRef)) : g940::OFF;
+    case engineRunning: return engineColour();
+    case navigationLights: return navigationLightsRef ? greenOn(on(navigationLightsRef)) : g940::OFF;
+    case parkingBrake: return parkingBrakeColour();
+    case brakes: return brakesColour();
     case gear: return on(isRetractRef) ? green1(arrayValue(gearRef)) : g940::OFF;
     case dataref: return customColour(led);
     }

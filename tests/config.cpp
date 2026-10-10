@@ -58,7 +58,9 @@ int main() {
         {"speedbrake_upper", LEDFunction::speedbrakeUpper}, {"flaps_upper", LEDFunction::flapsUpper},
         {"carb_heat", LEDFunction::carbHeat}, {"autopilot", LEDFunction::autopilot},
         {"speedbrake_lower", LEDFunction::speedbrakeLower}, {"flaps_lower", LEDFunction::flapsLower},
-        {"landing_lights", LEDFunction::landingLights}, {"gear", LEDFunction::gear}
+        {"landing_lights", LEDFunction::landingLights}, {"gear", LEDFunction::gear},
+        {"engine_running", LEDFunction::engineRunning}, {"navigation_lights", LEDFunction::navigationLights},
+        {"parking_brake", LEDFunction::parkingBrake}, {"brakes", LEDFunction::brakes}
     };
     for (const auto& role : roles) {
         std::istringstream roleInput(std::string("[General]\nled_8 = ") + role.name + " # switch assignment\n");
