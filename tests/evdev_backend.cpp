@@ -118,6 +118,11 @@ int main() {
     assert(openForceFeedback() && uploaded.size() == 1 && uploaded[1].type == FF_SPRING);
     assert(updateForceFeedback(state));
     assert(uploaded[1].u.condition[0].left_coeff == 48 << 8);
+    state.rollCue = .03f; state.pitchCue = -.04f;
+    assert(updateForceFeedback(state));
+    assert(uploaded[1].u.condition[0].center == static_cast<int>(.03f * 32767));
+    assert(uploaded[1].u.condition[1].center == static_cast<int>(-.04f * 32767));
+    state.rollCue = state.pitchCue = 0;
     state.effectScale = 0;
     assert(updateForceFeedback(state) && uploaded[1].u.condition[0].left_coeff == 0);
     assert(releaseForceFeedback() && !opened && removed.size() == 1 && stopped.size() == 1);
@@ -131,6 +136,10 @@ int main() {
     assert(uploaded[1].u.constant.level > 0 && uploaded[1].direction == 8192);
     state.rollVelocity = state.pitchVelocity = 0;
     assert(updateForceFeedback(state) && uploaded[1].u.constant.level == 0);
+    state.rollCue = .03f;
+    assert(updateForceFeedback(state));
+    assert(uploaded[1].u.constant.level > 0 && uploaded[1].direction == 49152);
+    state.rollCue = 0;
     assert(closeForceFeedback() && removed.size() == 1);
 
     resetDevice(); spring = false;
@@ -156,5 +165,5 @@ int main() {
     assert(!closeForceFeedback() && !opened && removed.size() == 1);
     resetDevice(); constant = false; failPlayID = 1;
     assert(!openForceFeedback() && !opened && uploaded.empty());
-    std::puts("Evdev composite damping, spring fallback, pause and cleanup passed.");
+    std::puts("Evdev composite damping, cue centers, spring fallback, pause and cleanup passed.");
 }

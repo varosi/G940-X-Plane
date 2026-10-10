@@ -13,6 +13,7 @@
 #include "XPLMUtilities.h"
 #include "g940Backend.h"
 #include "g940Config.h"
+#include "g940CueModel.h"
 
 #ifndef XPLM300
 #error This plugin requires the XPLM300 API
@@ -22,6 +23,9 @@ namespace {
 XPLMDataRef rollRef, pitchRef, pressureRef, alphaRef, eTrimRef, aTrimRef, pausedRef;
 XPLMDataRef icaoRef, vneRef;
 XPLMDataRef elevatorUpRef, elevatorDownRef, staticPitchTrimRef, stabilizerUpRef, stabilizerDownRef, stabilizerRef;
+XPLMDataRef windRefs[3], attitudeRefs[3], stalledRef, wingAreaRef, powerRef, maximumPowerRef;
+XPLMDataRef onGroundRef, replayRef, crashedRef;
+XPLMDataRef engineCountRef, legacyMaximumPowerRef;
 std::filesystem::path configFile;
 std::vector<g940::ConfigProfile> profiles = {g940::ConfigProfile{}};
 g940::AircraftProfile aircraftProfile;
@@ -29,6 +33,7 @@ bool profileDirty = true;
 bool enabled = false;
 bool forceReady = false;
 g940::ForceSmoother forceSmoother;
+g940::FlightCues flightCues;
 #ifdef G940_DEBUG_FORCE
 std::chrono::steady_clock::time_point nextForceTrace;
 #endif
@@ -82,6 +87,50 @@ void selectProfile() {
     XPLMDebugString(message);
 }
 
+g940::CueSample readCueSample(float pressurePa) {
+    g940::CueSample sample;
+    sample.pressurePa = pressurePa;
+    sample.airborne = onGroundRef && !XPLMGetDatai(onGroundRef) &&
+        (!replayRef || !XPLMGetDatai(replayRef)) && (!crashedRef || !XPLMGetDatai(crashedRef));
+    if (!sample.airborne) return sample;
+    sample.windValid = true;
+    float *attitude[] = {&sample.heading, &sample.pitch, &sample.roll};
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        sample.windValid &= windRefs[axis] && attitudeRefs[axis];
+        if (windRefs[axis]) sample.wind[axis] = XPLMGetDataf(windRefs[axis]);
+        if (attitudeRefs[axis]) *attitude[axis] = XPLMGetDataf(attitudeRefs[axis]);
+    }
+    sample.stalledFraction = std::numeric_limits<float>::quiet_NaN();
+    if (stalledRef && wingAreaRef && aircraftProfile.stallBuffetGain > 0.0f) {
+        std::array<float, g940::mainWingElements> stalled{}, area{};
+        // Main-wing surfaces 0..7; tail surfaces 8/9 must not trigger buffet.
+        if (XPLMGetDatavf(stalledRef, stalled.data(), 0, stalled.size()) == static_cast<int>(stalled.size()) &&
+            XPLMGetDatavf(wingAreaRef, area.data(), 0, area.size()) == static_cast<int>(area.size()))
+            sample.stalledFraction = g940::stalledWingFraction(stalled, area);
+    }
+    const int engines = engineCountRef ? XPLMGetDatai(engineCountRef) : 1;
+    if (powerRef && engines > 0 && engines <= 16 && aircraftProfile.stallBuffetGain > 0.0f) {
+        std::array<float, 16> power{}, maximum{};
+        bool haveMaximum = maximumPowerRef && XPLMGetDatavf(maximumPowerRef, maximum.data(), 0, engines) == engines;
+        if (!haveMaximum && legacyMaximumPowerRef) {
+            const float maximumPower = XPLMGetDataf(legacyMaximumPowerRef);
+            haveMaximum = std::isfinite(maximumPower) && maximumPower > 0.0f;
+            std::fill_n(maximum.begin(), engines, maximumPower);
+        }
+        if (haveMaximum && XPLMGetDatavf(powerRef, power.data(), 0, engines) == engines) {
+            float total = 0.0f, limit = 0.0f;
+            bool valid = true;
+            for (int engine = 0; engine < engines; ++engine) {
+                valid &= std::isfinite(power[engine]) && std::isfinite(maximum[engine]) && maximum[engine] >= 0.0f;
+                if (maximum[engine] > 0.0f) { total += std::max(0.0f, power[engine]); limit += maximum[engine]; }
+            }
+            if (valid && std::isfinite(total) && std::isfinite(limit) && limit > 0.0f)
+                sample.enginePower = g940::clamp(total / limit, 0.0f, 1.0f);
+        }
+    }
+    return sample;
+}
+
 float flightLoopCallback(float elapsed, float, int, void *) {
     if (profileDirty) {
         if (forceReady && !g940::releaseForceFeedback()) {
@@ -89,24 +138,26 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         }
         forceReady = false;
         forceSmoother.reset();
+        flightCues.reset();
         selectProfile();
         profileDirty = false;
     }
     if (!g940::prepareForceFeedback()) {
-        reportError(); forceReady = false; forceSmoother.reset(); return 5.0f;
+        reportError(); forceReady = false; forceSmoother.reset(); flightCues.reset(); return 5.0f;
     }
     if (XPLMGetDatai(pausedRef)) {
         if (!forceReady) return 0.2f;
 #ifdef G940_DEBUG_FORCE
         const bool startingRelease = !forceSmoother.releasing();
 #endif
-        const g940::ForceState state = forceSmoother.release(elapsed);
+        const g940::ForceState state = g940::withCues(forceSmoother.release(elapsed), flightCues.release(elapsed));
         if (!state.hasLoad() || state.effectScale <= 0.0f) {
             if (!g940::releaseForceFeedback()) {
                 reportError(); g940::closeForceFeedback();
             }
             forceReady = false;
             forceSmoother.reset();
+            flightCues.reset();
 #ifdef G940_DEBUG_FORCE
             XPLMDebugString("G940 FF trace: paused force released\n");
 #endif
@@ -116,7 +167,7 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         if (startingRelease) XPLMDebugString("G940 FF trace: one-second pause fade started\n");
 #endif
         if (!g940::updateForceFeedback(state)) {
-            reportError(); forceReady = false; forceSmoother.reset(); return 0.2f;
+            reportError(); forceReady = false; forceSmoother.reset(); flightCues.reset(); return 0.2f;
         }
         return 0.02f;
     }
@@ -125,6 +176,7 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         if (!g940::openForceFeedback()) { reportError(); return 5.0f; }
         forceReady = true;
         forceSmoother.reset();
+        flightCues.reset();
 #ifdef G940_DEBUG_FORCE
         nextForceTrace = std::chrono::steady_clock::time_point();
 #endif
@@ -140,7 +192,9 @@ float flightLoopCallback(float elapsed, float, int, void *) {
     const g940::ForceState target = g940::calculateForce(
         roll, pitch, pressurePa, alpha, elevatorTrim, aileronTrim, aircraftProfile, stabilizer);
     if (startingForce) forceSmoother.reset(target);
-    const g940::ForceState state = forceSmoother.update(target, elapsed);
+    g940::ForceState state = forceSmoother.update(target, elapsed);
+    if (target.hasLoad()) state = g940::withCues(state, flightCues.update(readCueSample(pressurePa), aircraftProfile, elapsed));
+    else flightCues.reset();
 #ifdef G940_DEBUG_FORCE
     const auto now = std::chrono::steady_clock::now();
     if (now >= nextForceTrace) {
@@ -148,7 +202,7 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         std::snprintf(message, sizeof(message),
             "G940 FF trace: q=%.2f Pa ratio=%.3f mechanical=%.3f aerodynamic=%.3f damping=%.3f "
             "yoke=(%.3f,%.3f) trim=(%.3f,%.3f) alpha=%.2f stab=%.2f centers=(%.3f,%.3f) "
-            "coeff=(%u,%u) spring=(%.3f,%.3f) scale=%.3f\n",
+            "coeff=(%u,%u) spring=(%.3f,%.3f) scale=%.3f cues=(%.4f,%.4f)\n",
             pressurePa, state.springRatio(), state.mechanicalRatio, state.aerodynamicRatio, state.dampingRatio,
             roll, pitch, aileronTrim, elevatorTrim,
             alpha, stabilizer, state.roll, state.pitch,
@@ -156,13 +210,13 @@ float flightLoopCallback(float elapsed, float, int, void *) {
             g940::springCoefficient(state.springRatio() * state.effectScale, 1),
             g940::springSaturationRatio(state.springRatio(), 0) * state.effectScale,
             g940::springSaturationRatio(state.springRatio(), 1) * state.effectScale,
-            state.effectScale);
+            state.effectScale, state.rollCue, state.pitchCue);
         XPLMDebugString(message);
         nextForceTrace = now + std::chrono::seconds(2);
     }
 #endif
     if (!g940::updateForceFeedback(state)) {
-        reportError(); forceReady = false; return 5.0f;
+        reportError(); forceReady = false; flightCues.reset(); return 5.0f;
     }
     return 0.02f;
 }
@@ -207,6 +261,21 @@ PLUGIN_API int XPluginStart(char *outName, char *outSig, char *outDesc) {
     stabilizerUpRef = XPLMFindDataRef("sim/aircraft/controls/acf_hstb_trim_up");
     stabilizerDownRef = XPLMFindDataRef("sim/aircraft/controls/acf_hstb_trim_dn");
     stabilizerRef = XPLMFindDataRef("sim/flightmodel2/controls/stabilizer_deflection_degrees");
+    const char *windNames[] = {"sim/weather/aircraft/wind_now_x_msc", "sim/weather/aircraft/wind_now_y_msc", "sim/weather/aircraft/wind_now_z_msc"};
+    const char *attitudeNames[] = {"sim/flightmodel/position/psi", "sim/flightmodel/position/theta", "sim/flightmodel/position/phi"};
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        windRefs[axis] = XPLMFindDataRef(windNames[axis]);
+        attitudeRefs[axis] = XPLMFindDataRef(attitudeNames[axis]);
+    }
+    stalledRef = XPLMFindDataRef("sim/flightmodel2/wing/elements/element_is_stalled");
+    wingAreaRef = XPLMFindDataRef("sim/flightmodel2/wing/elements/element_surface_area_mtr_sq");
+    powerRef = XPLMFindDataRef("sim/cockpit2/engine/indicators/power_watts");
+    maximumPowerRef = XPLMFindDataRef("sim/aircraft/engine/acf_pmax_per_engine");
+    legacyMaximumPowerRef = XPLMFindDataRef("sim/aircraft/engine/acf_pmax");
+    engineCountRef = XPLMFindDataRef("sim/aircraft/engine/acf_num_engines");
+    onGroundRef = XPLMFindDataRef("sim/flightmodel/failures/onground_any");
+    replayRef = XPLMFindDataRef("sim/time/is_in_replay");
+    crashedRef = XPLMFindDataRef("sim/flightmodel2/misc/has_crashed");
     return 1;
 }
 
@@ -226,6 +295,7 @@ PLUGIN_API void XPluginDisable() {
     if (!g940::closeForceFeedback()) reportError();
     forceReady = false;
     forceSmoother.reset();
+    flightCues.reset();
 }
 
 PLUGIN_API void XPluginStop() { XPluginDisable(); }

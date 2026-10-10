@@ -87,6 +87,13 @@ int main() {
     assert(centers == idleCenterReport(expected));
     const auto featureWrites = features.size();
     assert(updateForceFeedback({.2, -.3, .5}) && features.size() == featureWrites);
+    ForceState disturbed{.2f, -.3f, .5f};
+    disturbed.rollCue = .04f; disturbed.pitchCue = -.06f;
+    assert(updateForceFeedback(disturbed));
+    const auto cueReport = forceReport(disturbed);
+    assert(outputs.back() == std::vector<uint8_t>(cueReport.begin(), cueReport.end()));
+    assert(centers == idleCenterReport(cueReport)); // same disturbance in both grip modes
+    assert(idle[0] == idleForceReport(expected, 0) && idle[1] == idleForceReport(expected, 1));
     assert(updateForceFeedback({.2, -.3, .5, 0, 0, 0}));
     assert(outputs.back() == std::vector<uint8_t>(stop.begin(), stop.end()));
     assert(releaseForceFeedback() && connections == 1 && idle == disabledIdle);

@@ -143,6 +143,59 @@ separately. Static emulation and a bench comparison agree in both grip modes,
 but the latest flight reported early near-center grip-release kicks. Their
 cause remains unisolated; see [hardware findings](HARDWARE_TESTS.md).
 
+## Gust and natural buffet cues
+
+The [TB20 research](TB20_EFFECTS.md) distinguishes aerodynamic buffet from its
+aural stall warning. Optional cues leave X-Plane responsible for weather and
+aircraft physics; no aircraft force, control or weather dataref is written.
+
+Gust cues read the modern `sim/weather/aircraft/wind_now_*_msc` vectors (m/s,
+world east/up/south) and `sim/flightmodel/position/psi`, `theta`, `phi` (degrees).
+A 0.8 s world-coordinate low-pass removes steady wind; an 80 ms gust filter
+attenuates rapid steps. Rotate the residual into body right/up coordinates only
+after filtering, so turning in constant wind creates no synthetic turbulence.
+Negative gain times those two components supplies roll/pitch center offsets.
+The vectors' coverage of wakes and thermals is not guaranteed; this is a local
+weather wind-variation cue, not a measured turbulent hinge moment.
+
+Buffet reads paired `sim/flightmodel2/wing/elements/element_is_stalled` and
+`element_surface_area_mtr_sq` float arrays. The first 80 slots cover main-wing
+surfaces 0..7, ten elements each; horizontal tails 8/9 are excluded. Complete,
+finite arrays and positive total area are required. Area-weighted separation
+sets `clamp(stalledArea / totalArea / 0.2, 0, 1)`. This can respond to incipient
+partial-wing separation; it does not assert that the horn implies separation.
+The cockpit stall-warning status is deliberately not used as a shaker trigger.
+
+Actual `sim/cockpit2/engine/indicators/power_watts` is divided by configured
+maximum power from `sim/aircraft/engine/acf_pmax_per_engine`, summing only
+`acf_num_engines` engines. Legacy scalar `acf_pmax` is the fallback; missing
+engine count uses the first engine. Missing/invalid power uses the weak idle
+baseline. Buffet strength multiplies the separation signal by
+`stall_buffet_gain * (idleRatio + (1 - idleRatio) * clamp(powerRatio, 0, 1))`.
+A 200 ms envelope ramps it into two sine components at the configured frequency
+and 1.37 times that frequency, combined with weights 1 and 0.25 and divided by
+1.25. This bounded irregular waveform is a tuning approximation, not a measured
+TB20 spectrum. It adds pitch buffet without a scripted wing-drop impulse.
+
+Apply offsets after trim and stick-velocity filtering, preserving the base
+trim equilibrium and avoiding false software damping. Combined cues are bounded
+to ±0.12 normalized center travel, 3 units/s slew, and symmetric remaining
+center headroom. Native output and idle feature 10 share the resulting center;
+Linux native spring and composite constant force use the same disturbance.
+There is no second effect slot, new vendor waveform or direct constant command
+that disappears on grip release. Existing motor coefficients and caps remain.
+Damping-only profiles cannot render spring-center cues.
+
+Missing ground state, ground contact, replay or crash suppresses cues. Optional
+missing wind/attitude or stall arrays disables the corresponding channel.
+Near-zero airflow scales cues with `clamp(q / 100 Pa, 0, 1)`. Cue output fades
+with a 120 ms time constant on suppression/pause, alongside the existing
+one-second whole-force pause fade. Reconnect and aircraft/profile reload reset
+history. Updates slower than 20 Hz fade the sampled waveform to avoid aliasing;
+invalid timing clears cues. World-wind jumps greater than 20 m/s re-prime the
+wind baseline. These filters, thresholds and gains require hardware tuning,
+including feature-10 transfer performance during buffet.
+
 ## Aircraft configuration
 
 `Resources/plugins/g940FF/aircraft.ini` contains an INI `[General]` fallback
@@ -163,6 +216,10 @@ Enabling the plugin reloads the file, while normal callbacks do no file I/O.
 | `aerodynamic_gain` | `auto` or 0–4; added spring stiffness at qref; supplied 0.8, omitted/auto retains legacy `1 - mechanical_ratio` |
 | `mechanical_damping` | 0–1; pressure-independent movement resistance, default 0.2 |
 | `aerodynamic_damping` | 0–4; added damping at qref, default 0.8; total damping capped at 1 |
+| `turbulence_gain` | 0–0.1 normalized center displacement per m/s local wind change; General 0, Socata 0.015 |
+| `stall_buffet_gain` | 0–0.12 peak normalized pitch-center displacement; General 0, Socata 0.06 |
+| `stall_buffet_idle_ratio` | 0–1 fraction of powered buffet at idle; default 0.25 |
+| `stall_buffet_hz` | 2–6 Hz main frequency; default 5; second component at 1.37 times this |
 | `roll_trim_gain`, `pitch_trim_gain` | −10–10; multiplier of live normalized trim |
 | `pitch_aoa_deflection_gain` | −15–15 degrees free elevator per degree AoA; default 0.45 |
 | `pitch_aoa_gain` | Legacy alias, −1–1 normalized units at 15-degree travel; multiplied by 15; do not specify both gains in one section |

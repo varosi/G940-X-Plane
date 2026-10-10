@@ -32,6 +32,11 @@ struct AircraftProfile {
     float aerodynamicGain = 0.8f;
     float mechanicalDamping = 0.2f;
     float aerodynamicDamping = 0.8f;
+    // Optional tactile cues; disabled until an aircraft preset enables them.
+    float turbulenceGain = 0.0f; // normalized center displacement per m/s gust
+    float stallBuffetGain = 0.0f; // peak normalized pitch-center displacement
+    float stallBuffetIdleRatio = 0.25f;
+    float stallBuffetHz = 5.0f;
     float rollTrimGain = 1.0f;
     float pitchTrimGain = 1.0f;
     float pitchAoADeflectionGain = 0.45f; // degrees of elevator / degree of AoA

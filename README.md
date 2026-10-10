@@ -20,6 +20,11 @@ profiles are retained. Early near-center grip-release kicks reported with the
 preceding model remain unresolved. See [hardware findings](tools/HARDWARE_TESTS.md)
 and the [report protocol](tools/PROTOCOL.md).
 
+The Socata preset also enables experimental gust and natural stall-buffet cues,
+based on [TB20 manufacturer evidence](tools/TB20_EFFECTS.md). Gusts follow local
+wind changes; buffet follows main-wing separation and increases with engine
+power. These are bounded tactile approximations, with hardware tuning pending.
+
 ## Build
 
 Use GNU make, a C++20 compiler with `std::span`, curl, unzip and Python 3.8+.
@@ -160,6 +165,21 @@ curve. `mechanical_damping` controls resistance to movement at rest, while
 0.2/0.8 and remain within the existing damper limits. Damping does not add a
 steady force when the stick stops. Spring trim preloads the mechanical spring;
 aerodynamic trim shifts the aerodynamic equilibrium.
+
+`turbulence_gain` sets transient center displacement per m/s of changing wind;
+`stall_buffet_gain` sets peak pitch-center displacement. General disables both;
+Socata starts at 0.015 and 0.06. `stall_buffet_idle_ratio = 0.25` gives weak idle
+buffet, increasing with measured engine power, and `stall_buffet_hz = 5` sets the
+main waveform frequency. These numbers are provisional G940 tuning, not measured
+TB20 forces or frequencies. The real TB20 has a stall horn, not a stick shaker;
+the plugin does not trigger vibration from the horn alone or alter flight physics.
+Missing cue telemetry disables that cue while retaining ordinary force feedback.
+See [cue behavior and limitations](tools/TB20_EFFECTS.md#implemented-tactile-model).
+
+Upgrading preserves your existing configuration. To enable these effects in an
+older installation, add `turbulence_gain = 0.015` and `stall_buffet_gain = 0.06`
+to your existing Socata preset and reload the plugin. Setting either gain to
+zero disables that cue. No settings are written to joystick preferences.
 
 macOS/Windows render the combined spring and damper through native channels.
 Linux uses one constant-force effect for the G940 because its original driver

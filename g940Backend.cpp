@@ -164,10 +164,9 @@ bool updateForceFeedback(const ForceState& state) {
     if (forceFD < 0) return false;
     const float scale = clamp(state.effectScale, 0.0f, 1.0f);
     if (haveSpring) {
-        const float centers[] = {state.roll, state.pitch};
         for (unsigned axis = 0; axis < 2; ++axis) {
             auto& condition = effect.u.condition[axis];
-            condition.center = clamp(centers[axis], -1.0f, 1.0f) * 0x7fff;
+            condition.center = state.center(axis) * 0x7fff;
             condition.left_coeff = condition.right_coeff =
                 springCoefficient(state.springRatio() * scale, axis) << 8;
             condition.left_saturation = condition.right_saturation =

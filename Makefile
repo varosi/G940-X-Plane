@@ -128,6 +128,8 @@ test: $(SDK_HEADER)
 	mkdir -p "$(BUILDDIR)/tests"
 	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/protocol.cpp -I. -o "$(BUILDDIR)/tests/protocol"
 	"$(BUILDDIR)/tests/protocol"
+	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/cues.cpp -I. -o "$(BUILDDIR)/tests/cues"
+	"$(BUILDDIR)/tests/cues"
 	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/config.cpp -I. -o "$(BUILDDIR)/tests/config"
 	"$(BUILDDIR)/tests/config"
 	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/plugin_host.cpp -I. -o "$(BUILDDIR)/tests/force-feedback"

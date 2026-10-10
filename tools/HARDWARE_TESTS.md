@@ -97,6 +97,20 @@ KEAS reference and trim/AoA gains require tuning, and the grip-release kick
 remains open. Next flight comparisons should use the same tested TB10/TB20;
 warn and obtain readiness before applying forces.
 
+## Turbulence and buffet revision, 2026-10-10
+
+Manufacturer TB20 evidence supports weak natural buffet at idle, stronger with
+power, and an aural stall horn rather than a stick shaker. The new Socata cues
+follow local wind variation and main-wing element separation; the warning horn
+alone does not create shaking. See [research and tuning limits](TB20_EFFECTS.md).
+Existing trim, motor caps and native live/idle center mirroring are retained.
+
+The G940 is disconnected. Software verification cannot establish perceptible
+strength, correct physical sign, a measured TB20 spectrum, feature-10 transfer
+rate or smooth grip transitions in flight. No new hardware observation resolves
+the prior early near-center kick. The source installer preserves existing
+`aircraft.ini`; older configurations need the new Socata gains enabled explicitly.
+
 ## Settings and firmware analysis
 
 Original volatile reports were independently verified after comparisons:

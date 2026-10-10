@@ -34,6 +34,11 @@ struct ForceState {
     float dampingRatio = 0.0f;
     // Used only for software damping when the driver has no damper effect.
     float rollVelocity = 0.0f, pitchVelocity = 0.0f;
+    // Fast, bounded disturbances are added only after trim/velocity filtering.
+    float rollCue = 0.0f, pitchCue = 0.0f;
+    float center(unsigned axis) const {
+        return clamp(axis == 0 ? roll + rollCue : pitch + pitchCue, -1.0f, 1.0f);
+    }
     float springRatio() const { return clamp(mechanicalRatio + aerodynamicRatio, 0.0f, 1.0f); }
     bool hasLoad() const {
         return std::isfinite(mechanicalRatio) && mechanicalRatio >= 0.0f &&
@@ -79,7 +84,7 @@ inline std::array<float, 2> dampingForceComponents(const ForceState& state) {
 }
 inline std::array<float, 2> constantForceComponents(const ForceState& state) {
     std::array<float, 2> force = {{0.0f, 0.0f}};
-    const float demands[] = {state.rollForce, state.pitchForce};
+    const float demands[] = {state.rollForce + state.rollCue, state.pitchForce + state.pitchCue};
     if (!state.hasLoad()) return force;
     const float ratio = state.springRatio();
     const auto damping = dampingForceComponents(state);
@@ -113,10 +118,9 @@ inline std::array<uint8_t, 64> forceReport(const ForceState& state) {
     std::array<uint8_t, 64> report = {{2}};
     const float scale = clamp(state.effectScale, 0.0f, 1.0f);
     if (scale == 0.0f || !state.hasLoad()) return report;
-    const float centers[] = {state.roll, state.pitch};
     for (unsigned axis = 0; axis < 2; ++axis) {
         uint8_t *data = report.data() + 1 + 30 * axis;
-        const int center = clamp(centers[axis], -1.0f, 1.0f) * 0x7fff;
+        const int center = state.center(axis) * 0x7fff;
         put16(data + 6, center);
         put16(data + 8, center);
         data[10] = data[11] = springCoefficient(state.springRatio() * scale, axis);

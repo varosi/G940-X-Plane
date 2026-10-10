@@ -17,8 +17,10 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <string>
+#include <vector>
 
 PLUGIN_API int XPluginStart(char *, char *, char *);
 PLUGIN_API int XPluginEnable();
@@ -28,7 +30,7 @@ PLUGIN_API void XPluginReceiveMessage(XPLMPluginID, int, void *);
 
 namespace {
 enum Type { DATA_INTEGER, DATA_FLOAT, DATA_INTEGERS, DATA_FLOATS, DATA_BYTES };
-struct Ref { Type type; float value; std::string text = {}; };
+struct Ref { Type type; float value; std::string text = {}; std::vector<float> values = {}; };
 std::map<std::string, Ref> refs;
 XPLMFlightLoop_f callback = nullptr;
 int registrations = 0, unregistrations = 0;
@@ -76,8 +78,13 @@ int XPLMGetDatavi(XPLMDataRef data, int *out, int offset, int count) {
     *out = ref(data).value; return 1;
 }
 int XPLMGetDatavf(XPLMDataRef data, float *out, int offset, int count) {
-    assert(ref(data).type == DATA_FLOATS && offset == 0 && count == 1);
-    *out = ref(data).value; return 1;
+    const auto& source = ref(data);
+    assert(source.type == DATA_FLOATS && offset >= 0 && count >= 0);
+    if (source.values.empty()) { assert(offset == 0 && count == 1); *out = source.value; return 1; }
+    if (!out) return source.values.size();
+    const int copied = std::min(count, std::max(0, static_cast<int>(source.values.size()) - offset));
+    std::copy_n(source.values.begin() + std::min(offset, static_cast<int>(source.values.size())), copied, out);
+    return copied;
 }
 void XPLMRegisterFlightLoopCallback(XPLMFlightLoop_f flightLoop, float, void *) {
     assert(!callback); callback = flightLoop; ++registrations;
@@ -149,6 +156,26 @@ int main() {
         {"sim/flightmodel2/controls/aileron_trim", {DATA_FLOAT, 0}},
         {"sim/time/paused", {DATA_INTEGER, 0}}
     };
+    for (const char *wind : {"sim/weather/aircraft/wind_now_x_msc", "sim/weather/aircraft/wind_now_y_msc",
+                            "sim/weather/aircraft/wind_now_z_msc", "sim/flightmodel/position/psi",
+                            "sim/flightmodel/position/theta", "sim/flightmodel/position/phi"})
+        refs.emplace(wind, Ref{DATA_FLOAT, 0});
+    refs.emplace("sim/flightmodel/failures/onground_any", Ref{DATA_INTEGER, 0});
+    refs.emplace("sim/cockpit2/annunciators/stall_warning", Ref{DATA_INTEGER, 0});
+    refs.emplace("sim/time/is_in_replay", Ref{DATA_INTEGER, 0});
+    refs.emplace("sim/flightmodel2/misc/has_crashed", Ref{DATA_INTEGER, 0});
+    refs.emplace("sim/aircraft/engine/acf_num_engines", Ref{DATA_INTEGER, 1});
+    refs.emplace("sim/aircraft/engine/acf_pmax", Ref{DATA_FLOAT, 100000});
+    for (const char *array : {"sim/flightmodel2/wing/elements/element_is_stalled",
+                             "sim/flightmodel2/wing/elements/element_surface_area_mtr_sq"})
+        refs.emplace(array, Ref{DATA_FLOATS, 0, {}, std::vector<float>(480, 0)});
+    for (const char *array : {"sim/cockpit2/engine/indicators/power_watts", "sim/aircraft/engine/acf_pmax_per_engine"})
+        refs.emplace(array, Ref{DATA_FLOATS, 0, {}, std::vector<float>(16, 0)});
+    auto& wingArea = refs["sim/flightmodel2/wing/elements/element_surface_area_mtr_sq"].values;
+    std::fill_n(wingArea.begin(), 20, 1.0f);
+    // Positive unused power limits must not dilute this single-engine ratio.
+    std::fill(refs["sim/aircraft/engine/acf_pmax_per_engine"].values.begin(),
+              refs["sim/aircraft/engine/acf_pmax_per_engine"].values.end(), 100000);
 #endif
     missingRef = true;
     assert(XPluginStart(name, signature, description) == 0);
@@ -176,6 +203,41 @@ int main() {
     assert(std::abs(observedForce.rollForce + .1) < .001);
     assert(std::abs(observedForce.pitchForce + 2.0f / 15.0f) < .001);
     assert(debugLog.find("pitch trim aerodynamic, elevator travel +15.0/-15.0 deg, static tab 0.100") != std::string::npos);
+    assert(observedForce.rollCue == 0 && observedForce.pitchCue == 0);
+    // Actual local wind, not merely a weather setting, produces a cue.
+    refs["sim/weather/aircraft/wind_now_y_msc"].value = 2;
+    callback(.02f, 0, 0, nullptr);
+    assert(observedForce.pitchCue < 0 && observedForce.rollCue == 0);
+    for (int i = 0; i < 500; ++i) callback(.02f, 0, 0, nullptr);
+    assert(std::abs(observedForce.pitchCue) < 1e-5f);
+    refs["sim/cockpit2/annunciators/stall_warning"].value = 1;
+    callback(.02f, 0, 0, nullptr);
+    assert(std::abs(observedForce.pitchCue) < 1e-5f); // horn alone is not a shaker
+    auto& stalled = refs["sim/flightmodel2/wing/elements/element_is_stalled"].values;
+    stalled[0] = 1;
+    const auto peakBuffet = [&]() {
+        for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+        float peak = 0;
+        for (int i = 0; i < 200; ++i) {
+            callback(.02f, 0, 0, nullptr);
+            peak = std::max(peak, std::abs(observedForce.pitchCue));
+        }
+        return peak;
+    };
+    const float idleBuffet = peakBuffet();
+    assert(idleBuffet > .001f);
+    refs["sim/cockpit2/engine/indicators/power_watts"].values[0] = 100000;
+    assert(peakBuffet() > idleBuffet * 3);
+    stalled[0] = 0; stalled[80] = 1; wingArea[80] = 1;
+    for (int i = 0; i < 150; ++i) callback(.02f, 0, 0, nullptr);
+    assert(std::abs(observedForce.pitchCue) < 1e-5f); // tail separation excluded
+    stalled[0] = 1;
+    assert(peakBuffet() > .001f);
+    stalled.resize(79); // incomplete telemetry disables buffet, not the spring
+    for (int i = 0; i < 150; ++i) callback(.02f, 0, 0, nullptr);
+    assert(std::abs(observedForce.pitchCue) < 1e-5f && observedForce.springRatio() > 0);
+    stalled.assign(480, 0);
+    refs["sim/cockpit2/annunciators/stall_warning"].value = 0;
     refs["sim/flightmodel/misc/Qstatic"].value = 0;
     refs["sim/flightmodel/position/alpha"].value = -121;
     refs["sim/flightmodel2/controls/elevator_trim"].value = .2;
@@ -306,6 +368,151 @@ int main() {
     const int dampedOpens = opens;
     callback(.2f, 0, 0, nullptr);
     assert(opens == dampedOpens);
+    XPluginStop();
+    // Cue telemetry is optional. Exercise the real callback through separate
+    // lifecycles so erased datarefs can never leave a running plugin pointer.
+    std::ofstream(configFolder / "aircraft.ini") << "[General]\nreference_speed_knots=125\n"
+        "pitch_aoa_gain=0\nturbulence_gain=.015\nstall_buffet_gain=.06\n";
+    constexpr const char *stalledName = "sim/flightmodel2/wing/elements/element_is_stalled";
+    constexpr const char *areaName = "sim/flightmodel2/wing/elements/element_surface_area_mtr_sq";
+    constexpr const char *powerName = "sim/cockpit2/engine/indicators/power_watts";
+    constexpr const char *maximumName = "sim/aircraft/engine/acf_pmax_per_engine";
+    constexpr const char *countName = "sim/aircraft/engine/acf_num_engines";
+    constexpr const char *legacyName = "sim/aircraft/engine/acf_pmax";
+    constexpr const char *windName = "sim/weather/aircraft/wind_now_y_msc";
+    const float invalidTelemetry = std::numeric_limits<float>::quiet_NaN();
+    const auto resetTelemetry = [&]() {
+        assert(!callback);
+        refs["sim/time/paused"].value = 0;
+        refs["sim/time/is_in_replay"].value = 0;
+        refs["sim/flightmodel2/misc/has_crashed"].value = 0;
+        refs["sim/flightmodel/failures/onground_any"].value = 0;
+        for (const char *wind : {"sim/weather/aircraft/wind_now_x_msc", windName,
+             "sim/weather/aircraft/wind_now_z_msc", "sim/flightmodel/position/psi",
+             "sim/flightmodel/position/theta", "sim/flightmodel/position/phi"}) refs[wind].value = 0;
+        refs[stalledName].values.assign(480, 0);
+        refs[stalledName].values[0] = 1;
+        refs[areaName].values.assign(480, 0);
+        std::fill_n(refs[areaName].values.begin(), 20, 1.0f);
+        refs[powerName].values.assign(16, 100000);
+        refs[maximumName].values.assign(16, 100000);
+        refs[countName].value = 1;
+        refs[legacyName].value = 100000;
+    };
+    const auto beginCueFlight = [&]() {
+        XPluginStop();
+        assert(XPluginStart(name, signature, description) == 1);
+        assert(XPluginEnable() == 1 && callback);
+        for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+        assert(observedForce.springRatio() > .59f); // optional cues never disable the base load
+    };
+    const auto buffetRms = [&]() {
+        beginCueFlight();
+        float squares = 0;
+        for (int i = 0; i < 300; ++i) {
+            callback(.02f, 0, 0, nullptr);
+            assert(std::isfinite(observedForce.pitchCue));
+            squares += observedForce.pitchCue * observedForce.pitchCue;
+        }
+        return std::sqrt(squares / 300);
+    };
+    resetTelemetry();
+    const float fullPowerRms = buffetRms();
+    assert(fullPowerRms > .005f);
+    XPluginStop();
+    refs[powerName].values[0] = 0;
+    const float idlePowerRms = buffetRms();
+    assert(std::abs(idlePowerRms / fullPowerRms - .25f) < .001f);
+    // Huge/invalid unused engine slots cannot dilute or contaminate the one
+    // installed engine. Only the reported engine count participates.
+    XPluginStop(); resetTelemetry();
+    refs[powerName].values[15] = invalidTelemetry;
+    refs[maximumName].values[15] = 1e30f;
+    assert(std::abs(buffetRms() / fullPowerRms - 1.0f) < .001f);
+    XPluginStop(); resetTelemetry();
+    refs[countName].value = 2;
+    refs[powerName].values[0] = 50000; refs[powerName].values[1] = 100000;
+    refs[maximumName].values[1] = 300000;
+    assert(std::abs(buffetRms() / fullPowerRms - (.25f + .75f * .375f)) < .001f);
+    XPluginStop();
+    refs[maximumName].values.resize(1); // short modern limit array falls back to legacy per-engine limit
+    assert(std::abs(buffetRms() / fullPowerRms - (.25f + .75f * .75f)) < .001f);
+    XPluginStop();
+    refs[powerName].values.resize(1); // short actual power cannot invent the second engine's output
+    assert(std::abs(buffetRms() / idlePowerRms - 1.0f) < .001f);
+    for (float invalidCount : {0.0f, 17.0f}) {
+        XPluginStop(); resetTelemetry(); refs[countName].value = invalidCount;
+        assert(std::abs(buffetRms() / idlePowerRms - 1.0f) < .001f);
+    }
+    for (const char *invalidArray : {powerName, maximumName}) {
+        XPluginStop(); resetTelemetry(); refs[invalidArray].values[0] = invalidTelemetry;
+        assert(std::abs(buffetRms() / idlePowerRms - 1.0f) < .001f);
+    }
+    XPluginStop(); resetTelemetry();
+    refs[maximumName].values[0] = -1;
+    assert(std::abs(buffetRms() / idlePowerRms - 1.0f) < .001f);
+
+    // Missing power uses weak idle buffet; a missing modern power limit uses
+    // the legacy scalar. Missing count conservatively assumes one engine.
+    for (const char *missing : {powerName, maximumName, countName}) {
+        XPluginStop(); resetTelemetry();
+        const Ref backup = refs.at(missing);
+        refs.erase(missing);
+        const float expected = missing == powerName ? idlePowerRms : fullPowerRms;
+        assert(std::abs(buffetRms() / expected - 1.0f) < .001f);
+        XPluginStop(); refs.emplace(missing, backup);
+    }
+    XPluginStop(); resetTelemetry();
+    const Ref savedMaximum = refs.at(maximumName);
+    refs.erase(maximumName); refs[legacyName].value = invalidTelemetry;
+    assert(std::abs(buffetRms() / idlePowerRms - 1.0f) < .001f);
+    XPluginStop(); refs.emplace(maximumName, savedMaximum);
+
+    for (const char *array : {stalledName, areaName}) {
+        XPluginStop(); resetTelemetry(); refs[array].values.resize(79);
+        assert(buffetRms() < 1e-6f); // partial wing telemetry suppresses only buffet
+        XPluginStop(); resetTelemetry(); refs[array].values[0] = invalidTelemetry;
+        assert(buffetRms() < 1e-6f);
+        XPluginStop(); resetTelemetry();
+        const Ref backup = refs.at(array); refs.erase(array);
+        assert(buffetRms() < 1e-6f);
+        refs[windName].value = 2;
+        callback(.02f, 0, 0, nullptr);
+        assert(observedForce.pitchCue < 0); // wind remains independently available
+        XPluginStop(); refs.emplace(array, backup);
+    }
+    for (const char *missing : {windName, "sim/flightmodel/position/phi"}) {
+        XPluginStop(); resetTelemetry();
+        const Ref backup = refs.at(missing); refs.erase(missing);
+        assert(std::abs(buffetRms() / fullPowerRms - 1.0f) < .001f);
+        refs[stalledName].values[0] = 0;
+        refs["sim/weather/aircraft/wind_now_x_msc"].value = 3;
+        for (int i = 0; i < 150; ++i) callback(.02f, 0, 0, nullptr);
+        assert(std::abs(observedForce.rollCue) < 1e-6f && std::abs(observedForce.pitchCue) < 1e-6f);
+        XPluginStop(); refs.emplace(missing, backup);
+    }
+    XPluginStop(); resetTelemetry(); refs[windName].value = invalidTelemetry;
+    assert(std::abs(buffetRms() / fullPowerRms - 1.0f) < .001f); // bad wind does not erase real buffet
+    for (const char *suppressed : {"sim/flightmodel/failures/onground_any", "sim/time/is_in_replay",
+                                  "sim/flightmodel2/misc/has_crashed"}) {
+        XPluginStop(); resetTelemetry();
+        assert(buffetRms() > .005f);
+        refs[suppressed].value = 1;
+        refs[windName].value = 3;
+        for (int i = 0; i < 150; ++i) callback(.02f, 0, 0, nullptr);
+        assert(std::abs(observedForce.rollCue) < 1e-6f && std::abs(observedForce.pitchCue) < 1e-6f);
+        assert(observedForce.springRatio() > .59f);
+    }
+    XPluginStop(); resetTelemetry();
+    const Ref savedGround = refs.at("sim/flightmodel/failures/onground_any");
+    refs.erase("sim/flightmodel/failures/onground_any"); // cannot safely establish airborne state
+    assert(buffetRms() < 1e-6f);
+    XPluginStop(); refs.emplace("sim/flightmodel/failures/onground_any", savedGround);
+    resetTelemetry(); assert(buffetRms() > .005f);
+    const int releasesBeforeCuePause = releases;
+    refs["sim/time/paused"].value = 1;
+    for (int i = 0; i < 150; ++i) callback(.02f, 0, 0, nullptr);
+    assert(releases > releasesBeforeCuePause && std::abs(observedForce.pitchCue) < .0001f);
     XPluginStop();
     std::filesystem::remove_all(configRoot);
 #endif
