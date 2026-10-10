@@ -19,6 +19,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,9 +30,17 @@ PLUGIN_API void XPluginStop();
 PLUGIN_API void XPluginReceiveMessage(XPLMPluginID, int, void *);
 
 namespace {
-enum Type { DATA_INTEGER, DATA_FLOAT, DATA_INTEGERS, DATA_FLOATS, DATA_BYTES };
-struct Ref { Type type; float value; std::string text = {}; std::vector<float> values = {}; };
+enum Type { DATA_INTEGER, DATA_FLOAT, DATA_DOUBLE, DATA_INTEGERS, DATA_FLOATS, DATA_BYTES };
+struct Ref {
+    Type type;
+    float value;
+    std::string text = {};
+    std::vector<float> values = {};
+    std::optional<double> doubleValue = {};
+    bool good = true;
+};
 std::map<std::string, Ref> refs;
+std::map<std::string, unsigned> lookups;
 XPLMFlightLoop_f callback = nullptr;
 int registrations = 0, unregistrations = 0;
 int opens = 0, closes = 0;
@@ -47,6 +56,7 @@ Ref& ref(XPLMDataRef data) { assert(data); return *static_cast<Ref *>(data); }
 
 extern "C" {
 XPLMDataRef XPLMFindDataRef(const char *name) {
+    ++lookups[name];
     if (missingRef) return nullptr;
     auto entry = refs.find(name);
     return entry == refs.end() ? nullptr : &entry->second;
@@ -65,8 +75,30 @@ void XPLMGetNthAircraftModel(int index, char *name, char *path) {
     std::strcpy(name, aircraftFile.c_str());
     std::strcpy(path, ("/Aircraft/" + aircraftFile).c_str());
 }
-int XPLMGetDatai(XPLMDataRef data) { assert(ref(data).type == DATA_INTEGER); return ref(data).value; }
-float XPLMGetDataf(XPLMDataRef data) { assert(ref(data).type == DATA_FLOAT); return ref(data).value; }
+int XPLMIsDataRefGood(XPLMDataRef data) { return data && ref(data).good; }
+int XPLMGetDatai(XPLMDataRef data) {
+    assert(ref(data).type == DATA_INTEGER);
+    return ref(data).good ? ref(data).value : 0;
+}
+float XPLMGetDataf(XPLMDataRef data) {
+    assert(ref(data).type == DATA_FLOAT);
+    return ref(data).good ? ref(data).value : 0.0f;
+}
+double XPLMGetDatad(XPLMDataRef data) {
+    assert(ref(data).type == DATA_DOUBLE);
+    return ref(data).good ? ref(data).doubleValue.value_or(ref(data).value) : 0.0;
+}
+XPLMDataTypeID XPLMGetDataRefTypes(XPLMDataRef data) {
+    switch (ref(data).type) {
+    case DATA_INTEGER: return xplmType_Int;
+    case DATA_FLOAT: return xplmType_Float;
+    case DATA_DOUBLE: return xplmType_Double;
+    case DATA_INTEGERS: return xplmType_IntArray;
+    case DATA_FLOATS: return xplmType_FloatArray;
+    case DATA_BYTES: return xplmType_Data;
+    }
+    assert(false); return xplmType_Unknown;
+}
 int XPLMGetDatab(XPLMDataRef data, void *out, int offset, int count) {
     assert(ref(data).type == DATA_BYTES && offset == 0);
     const int copied = std::min(count, static_cast<int>(ref(data).text.size()));
@@ -74,14 +106,25 @@ int XPLMGetDatab(XPLMDataRef data, void *out, int offset, int count) {
     return out ? copied : ref(data).text.size();
 }
 int XPLMGetDatavi(XPLMDataRef data, int *out, int offset, int count) {
-    assert(ref(data).type == DATA_INTEGERS && offset == 0 && count == 1);
-    *out = ref(data).value; return 1;
+    const auto& source = ref(data);
+    assert(source.type == DATA_INTEGERS && offset >= 0 && count >= 0);
+    if (!out) return source.values.empty() ? 1 : source.values.size();
+    if (source.values.empty()) {
+        if (offset != 0 || count == 0) return 0;
+        *out = source.value; return 1;
+    }
+    const int copied = std::min(count, std::max(0, static_cast<int>(source.values.size()) - offset));
+    for (int i = 0; i < copied; ++i) out[i] = source.values[offset + i];
+    return copied;
 }
 int XPLMGetDatavf(XPLMDataRef data, float *out, int offset, int count) {
     const auto& source = ref(data);
     assert(source.type == DATA_FLOATS && offset >= 0 && count >= 0);
-    if (source.values.empty()) { assert(offset == 0 && count == 1); *out = source.value; return 1; }
-    if (!out) return source.values.size();
+    if (!out) return source.values.empty() ? 1 : source.values.size();
+    if (source.values.empty()) {
+        if (offset != 0 || count == 0) return 0;
+        *out = source.value; return 1;
+    }
     const int copied = std::min(count, std::max(0, static_cast<int>(source.values.size()) - offset));
     std::copy_n(source.values.begin() + std::min(offset, static_cast<int>(source.values.size())), copied, out);
     return copied;
@@ -117,8 +160,19 @@ const char *backendError() { return "simulated device error"; }
 
 int main() {
     char name[256], signature[256], description[256];
+    const auto configRoot = std::filesystem::temp_directory_path() /
+        ("g940-host-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto bundleRoot = configRoot / u8"G940 profiles é";
+    const auto configFolder = bundleRoot / "g940FF";
+    std::filesystem::create_directories(configFolder / "64");
+    std::filesystem::copy_file("aircraft.ini", configFolder / "aircraft.ini");
 #ifdef TEST_LEDS
+    const auto pluginFolder = bundleRoot / "g940LEDs";
+    std::filesystem::create_directories(pluginFolder / "64");
+    const auto pluginPath = (pluginFolder / "64/mac.xpl").generic_u8string();
+    pluginFile.assign(pluginPath.begin(), pluginPath.end());
     refs = {
+        {"sim/aircraft/view/acf_ICAO", {DATA_BYTES, 0, "TOBA"}},
         {"sim/aircraft/prop/acf_en_type", {DATA_INTEGERS, 1}},
         {"sim/aircraft2/metadata/is_glider", {DATA_INTEGER, 0}},
         {"sim/aircraft/parts/acf_flapEQ", {DATA_INTEGER, 1}},
@@ -132,11 +186,6 @@ int main() {
         {"sim/flightmodel2/controls/speedbrake_ratio", {DATA_FLOAT, .75}}
     };
 #else
-    const auto configRoot = std::filesystem::temp_directory_path() /
-        ("g940-host-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    const auto configFolder = configRoot / u8"G940 profiles é" / "g940FF";
-    std::filesystem::create_directories(configFolder / "64");
-    std::filesystem::copy_file("aircraft.ini", configFolder / "aircraft.ini");
     const auto pluginPath = (configFolder / "64/mac.xpl").generic_u8string();
     pluginFile.assign(pluginPath.begin(), pluginPath.end());
     refs = {
@@ -178,7 +227,11 @@ int main() {
               refs["sim/aircraft/engine/acf_pmax_per_engine"].values.end(), 100000);
 #endif
     missingRef = true;
+#ifdef TEST_LEDS
+    assert(XPluginStart(name, signature, description) == 1); // optional indicators may be unavailable
+#else
     assert(XPluginStart(name, signature, description) == 0);
+#endif
     assert(!callback);
     missingRef = false;
     assert(XPluginStart(name, signature, description) == 1);
@@ -514,8 +567,213 @@ int main() {
     for (int i = 0; i < 150; ++i) callback(.02f, 0, 0, nullptr);
     assert(releases > releasesBeforeCuePause && std::abs(observedForce.pitchCue) < .0001f);
     XPluginStop();
-    std::filesystem::remove_all(configRoot);
+#else
+    // Both plugins share the FF sibling's configuration, including Unicode
+    // paths; an accidentally read LED-local config would mask these mappings.
+    std::ofstream(pluginFolder / "aircraft.ini") << "[General]\nled_1=red\n";
+    const auto restartLEDs = [&]() {
+        XPluginStop();
+        assert(XPluginStart(name, signature, description) == 1);
+        assert(XPluginEnable() == 1 && callback);
+        assert(callback(.2f, 0, 0, nullptr) == .2f);
+        assert(deviceOpen);
+    };
+    const auto configureLEDs = [&](const char *configuration) {
+        XPluginStop();
+        std::ofstream(configFolder / "aircraft.ini") << configuration;
+        restartLEDs();
+    };
+    // Remap every legacy indication and inherit the General settings. Aircraft
+    // changes choose a new preset only for the user's plane, not an AI plane.
+    configureLEDs("[General]\nled_1=landing_lights\nled_2=gear\n"
+        "led_3=flaps_lower\nled_4=flaps_upper\nled_5=speedbrake_lower\n"
+        "led_6=speedbrake_upper\nled_7=autopilot\nled_8=carb_heat\n"
+        "[Socata]\nmatch_icao=TOBA\nmatch_acf=*Socata*.acf\nled_8=amber\n");
+    const g940::LEDState mapped = {{g940::RED, g940::AMBER, g940::RED, g940::AMBER,
+        g940::AMBER, g940::GREEN, g940::GREEN, g940::AMBER}};
+    assert(observedLEDs == mapped);
+    refs["sim/aircraft/view/acf_ICAO"].text = "B738";
+    aircraftFile = "Boeing 737.acf";
+    XPluginReceiveMessage(XPLM_PLUGIN_XPLANE, XPLM_MSG_PLANE_LOADED, reinterpret_cast<void *>(1));
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs == mapped);
+    XPluginReceiveMessage(XPLM_PLUGIN_XPLANE, XPLM_MSG_PLANE_LOADED, nullptr);
+    callback(.2f, 0, 0, nullptr);
+    auto generalMapped = mapped; generalMapped[7] = g940::GREEN;
+    assert(observedLEDs == generalMapped);
+    // Missing ICAO still allows filename matching, and does not prevent load.
+    XPluginStop();
+    const Ref savedICAO = refs.at("sim/aircraft/view/acf_ICAO");
+    refs.erase("sim/aircraft/view/acf_ICAO");
+    aircraftFile = "JF_Socata_TB10+TB20.acf";
+    restartLEDs();
+    assert(observedLEDs == mapped);
+    XPluginStop(); refs.emplace("sim/aircraft/view/acf_ICAO", savedICAO);
+
+    configureLEDs("[General]\nled_1=red\nled_2=green\nled_3=amber\n"
+        "led_4=off\nled_5=off\nled_6=green\nled_7=red\nled_8=amber\n");
+    const g940::LEDState constantColours = {{g940::RED, g940::GREEN, g940::AMBER, g940::OFF,
+        g940::OFF, g940::GREEN, g940::RED, g940::AMBER}};
+    assert(observedLEDs == constantColours);
+    // A mixed-case aircraft-owned name must be preserved; its lower-case
+    // spelling is a different, absent dataref in this host.
+    refs.emplace("Custom/State", Ref{DATA_FLOAT, 0});
+    refs.emplace("Custom/Double", Ref{DATA_DOUBLE, 1});
+    refs.emplace("Custom/Integer", Ref{DATA_INTEGER, 0});
+    refs.emplace("Custom/Floats", Ref{DATA_FLOATS, 0, {}, {1, 1, .5f}});
+    refs.emplace("Custom/Integers", Ref{DATA_INTEGERS, 0, {}, {2, 2, 1}});
+    refs.emplace("Custom/Bytes", Ref{DATA_BYTES, 0, "unreadable as a number"});
+    const char *customConfiguration = "[General]\nled_1=dataref:Custom/State\nled_2=dataref:Custom/Double\n"
+        "led_3=dataref:Custom/Integer\nled_4=dataref:Custom/Floats[2], 0.1, 0.9\n"
+        "led_5=dataref:Custom/Integers[2], 0, 2\nled_6=dataref:Custom/Floats\n"
+        "led_7=dataref:Custom/State[0]\nled_8=dataref:Custom/Bytes\n";
+    configureLEDs(customConfiguration);
+    const g940::LEDState customColours = {{g940::RED, g940::GREEN, g940::RED, g940::AMBER,
+        g940::AMBER, g940::GREEN, g940::OFF, g940::OFF}};
+    assert(observedLEDs == customColours);
+    assert(lookups["Custom/State"] > 0 && lookups["custom/state"] == 0);
+    refs["Custom/State"].value = -.25f; // any nonzero binary signal is green
+    refs["Custom/Integer"].value = 1;
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::GREEN && observedLEDs[2] == g940::GREEN);
+    refs["Custom/Floats"].values[2] = .1f;
+    refs["Custom/Integers"].values[2] = 0;
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[3] == g940::RED && observedLEDs[4] == g940::RED);
+    refs["Custom/Floats"].values[2] = .9f;
+    refs["Custom/Integers"].values[2] = 2;
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[3] == g940::GREEN && observedLEDs[4] == g940::GREEN);
+    refs["Custom/Floats"].values[2] = .1001f;
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[3] == g940::AMBER);
+    const float badLEDValue = std::numeric_limits<float>::quiet_NaN();
+    refs["Custom/State"].value = badLEDValue;
+    refs["Custom/Double"].value = badLEDValue;
+    refs["Custom/Floats"].values[2] = badLEDValue;
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::OFF && observedLEDs[1] == g940::OFF && observedLEDs[3] == g940::OFF);
+    assert(observedLEDs[2] == g940::GREEN && observedLEDs[5] == g940::GREEN);
+    // Native double datarefs must retain their range and precision. Casting
+    // huge/tiny finite values to float would falsely turn this binary LED OFF
+    // or RED; actual nonfinite values remain unavailable.
+    for (double finiteValue : {std::numeric_limits<double>::max(), -std::numeric_limits<double>::max(),
+                               std::numeric_limits<double>::min(), std::numeric_limits<double>::denorm_min()}) {
+        refs["Custom/Double"].doubleValue = finiteValue;
+        callback(.2f, 0, 0, nullptr);
+        assert(observedLEDs[1] == g940::GREEN && observedLEDs[2] == g940::GREEN);
+    }
+    for (double nonfiniteValue : {std::numeric_limits<double>::infinity(),
+                                  -std::numeric_limits<double>::infinity(),
+                                  std::numeric_limits<double>::quiet_NaN()}) {
+        refs["Custom/Double"].doubleValue = nonfiniteValue;
+        callback(.2f, 0, 0, nullptr);
+        assert(observedLEDs[1] == g940::OFF && observedLEDs[2] == g940::GREEN);
+    }
+    refs["Custom/Double"].doubleValue = 0.0;
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[1] == g940::RED);
+    refs["Custom/Floats"].values.resize(2);
+    refs["Custom/Integers"].values.resize(2);
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[3] == g940::OFF && observedLEDs[4] == g940::OFF);
+    assert(observedLEDs[5] == g940::GREEN); // implicit array index is zero
+
+    // The SDK may retain an orphaned handle and its original type after an
+    // aircraft plugin unloads. Its scalar getter then returns zero, which
+    // must not masquerade as a valid RED indication.
+    refs["Custom/State"].value = 1;
+    refs["Custom/Double"].value = 1;
+    refs["Custom/Double"].doubleValue.reset();
+    configureLEDs(customConfiguration);
+    assert(observedLEDs[0] == g940::GREEN);
+    refs["Custom/State"].good = false;
+    assert(XPLMGetDataRefTypes(&refs["Custom/State"]) == xplmType_Float);
+    assert(XPLMGetDataf(&refs["Custom/State"]) == 0.0f);
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::OFF && observedLEDs[1] == g940::GREEN);
+    // Keep the orphan present until a scheduled resolution sees it too.
+    for (int i = 0; i < 30; ++i) callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::OFF);
+    refs["Custom/State"].good = true;
+    for (int i = 0; i < 30; ++i) callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::GREEN);
+    refs["Custom/State"].good = false;
+    XPluginReceiveMessage(XPLM_PLUGIN_XPLANE, XPLM_MSG_PLANE_LOADED, nullptr);
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::OFF);
+    refs["Custom/State"].good = true;
+    XPluginReceiveMessage(XPLM_PLUGIN_XPLANE, XPLM_MSG_PLANE_LOADED, nullptr);
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::GREEN);
+    configureLEDs("[General]\nled_1=green\nled_2=dataref:Custom/Double, 0.1, 0.9\n");
+    refs["Custom/Double"].doubleValue = std::numeric_limits<double>::max();
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::GREEN && observedLEDs[1] == g940::GREEN);
+    refs["Custom/Double"].doubleValue = -std::numeric_limits<double>::max();
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::GREEN && observedLEDs[1] == g940::RED);
+
+    // A failed configuration reload must not register a callback or touch
+    // hardware. A missing shared config restores the legacy defaults.
+    XPluginStop();
+    const int registeredBeforeMalformed = registrations, openedBeforeMalformed = opens;
+    std::ofstream(configFolder / "aircraft.ini") << "[General]\nled_1=unknown-indication\n";
+    assert(XPluginEnable() == 0 && !callback && !deviceOpen);
+    assert(registrations == registeredBeforeMalformed && opens == openedBeforeMalformed);
+    std::filesystem::remove(configFolder / "aircraft.ini");
+    restartLEDs();
+    auto defaultColours = expected; defaultColours[2] = g940::GREEN;
+    assert(observedLEDs == defaultColours);
+    assert(debugLog.find("aircraft.ini missing") != std::string::npos);
+    XPluginStop();
+    missingRef = true;
+    restartLEDs();
+    assert(observedLEDs == g940::LEDState{}); // every missing indicator is OFF
+    XPluginStop(); missingRef = false;
+
+    // Optional metadata suppresses only dependent indicators. Corrupt sensor
+    // values likewise affect only the LEDs that use that channel.
+    const Ref savedGlider = refs.at("sim/aircraft2/metadata/is_glider");
+    refs.erase("sim/aircraft2/metadata/is_glider");
+    restartLEDs();
+    auto missingMetadata = defaultColours;
+    missingMetadata[2] = missingMetadata[3] = missingMetadata[6] = g940::OFF;
+    assert(observedLEDs == missingMetadata);
+    XPluginStop(); refs.emplace("sim/aircraft2/metadata/is_glider", savedGlider);
+    refs["sim/cockpit2/controls/flap_handle_deploy_ratio"].value = badLEDValue;
+    restartLEDs();
+    auto badFlaps = defaultColours; badFlaps[1] = badFlaps[5] = g940::OFF;
+    assert(observedLEDs == badFlaps);
+    XPluginStop(); refs["sim/cockpit2/controls/flap_handle_deploy_ratio"].value = .25f;
+
+    // Add-on datarefs can appear after plugin startup. Retry missing channels
+    // every five seconds, and retry immediately when the user changes planes.
+    constexpr const char *flapName = "sim/cockpit2/controls/flap_handle_deploy_ratio";
+    const Ref savedFlaps = refs.at(flapName);
+    refs.erase(flapName);
+    configureLEDs("[General]\nled_1=dataref:Late/Ready\nled_2=flaps_upper\n"
+        "led_3=off\nled_4=green\nled_5=off\nled_6=off\nled_7=off\nled_8=off\n");
+    assert(observedLEDs[0] == g940::OFF && observedLEDs[1] == g940::OFF && observedLEDs[3] == g940::GREEN);
+    const auto firstLookupCount = lookups["Late/Ready"];
+    refs.emplace("Late/Ready", Ref{DATA_FLOAT, 1});
+    refs.emplace(flapName, savedFlaps);
+    for (int i = 0; i < 15; ++i) callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::OFF && observedLEDs[1] == g940::OFF);
+    assert(lookups["Late/Ready"] == firstLookupCount);
+    for (int i = 0; i < 15; ++i) callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::GREEN && observedLEDs[1] == g940::AMBER);
+    assert(lookups["Late/Ready"] > firstLookupCount);
+    configureLEDs("[General]\nled_1=dataref:Late/Plane\nled_2=off\n"
+        "led_3=off\nled_4=off\nled_5=off\nled_6=off\nled_7=off\nled_8=off\n");
+    assert(observedLEDs[0] == g940::OFF);
+    refs.emplace("Late/Plane", Ref{DATA_INTEGER, 1});
+    XPluginReceiveMessage(XPLM_PLUGIN_XPLANE, XPLM_MSG_PLANE_LOADED, nullptr);
+    callback(.2f, 0, 0, nullptr);
+    assert(observedLEDs[0] == g940::GREEN);
+    XPluginStop();
 #endif
+    std::filesystem::remove_all(configRoot);
     std::puts("Dataref types, reconnect, pause, and plugin lifecycle passed.");
 }
 

@@ -119,7 +119,7 @@ feedback needs read/write access to `/dev/input/event*`; LEDs need the original
 
 Edit `Resources/plugins/g940FF/aircraft.ini`, beside the `64` folder. The
 [supplied configuration](aircraft.ini) includes `[General]` and `[Socata TB10/TB20]`.
-The plugin first matches the aircraft's ICAO code, then its `.acf` filename;
+Both plugins read this file and first match the aircraft's ICAO code, then its `.acf` filename;
 matches ignore ASCII case. Socata recognizes `TOBA`/`TRIN` and TB10/TB20 filenames,
 including the combined aircraft used in testing. Other aircraft use General.
 Additional sections inherit General settings and can define `match_icao` (comma
@@ -189,11 +189,52 @@ rate with a 50 ms filter. Spring-only drivers retain spring feedback without
 software damping. These transport approximations still need hardware tuning.
 
 Profiles change automatically when the user's aircraft loads; AI aircraft
-notifications are ignored. To reload edits, disable/re-enable g940FF in Plugin
-Admin. `Log.txt` shows the selected profile and reference source. A missing file
-uses General defaults. Malformed, duplicate, unknown or out-of-range settings
-prevent enabling force feedback and report the offending setting in the log.
+notifications are ignored. To reload edits, disable/re-enable the affected plugin
+in Plugin Admin (both plugins if you changed both force and LED settings).
+`Log.txt` shows the selected profile. A missing file uses General defaults.
+Both plugins validate the shared file: malformed, duplicate, unknown or
+out-of-range settings prevent enabling either plugin and report the error in the log.
 Numeric ranges are documented in the [protocol](tools/PROTOCOL.md#aircraft-configuration).
+
+### LED assignments
+
+Set `led_1` through `led_8` in `[General]` for the throttle's P1–P8 LEDs.
+Aircraft presets inherit these assignments and can override individual LEDs.
+Omitting the keys preserves the original mapping:
+
+| LEDs | Assignment names | Indication |
+| --- | --- | --- |
+| P1 / P5 | `speedbrake_upper` / `speedbrake_lower` | First / second half of speedbrake travel |
+| P2 / P6 | `flaps_upper` / `flaps_lower` | First / second half of flap travel |
+| P3 | `carb_heat` | Carb heat on the first engine, for carbureted non-gliders |
+| P4 | `autopilot` | Autopilot status, for non-gliders |
+| P7 | `landing_lights` | Landing-light status, for non-gliders |
+| P8 | `gear` | First gear deployment, for retractable gear |
+
+Any LED can use any of these functions, or `off`, `red`, `green`, or `amber`.
+Existing functions keep their equipment checks; unavailable equipment shows off.
+Custom numeric datarefs let you display other standard or aircraft-specific states:
+
+```ini
+# Add these keys to an existing profile, replacing any assignments already there.
+led_7 = dataref:sim/cockpit2/switches/navigation_lights_on
+led_8 = dataref:sim/flightmodel2/gear/deploy_ratio[0], 0, 1
+```
+
+Without thresholds, zero is red and any nonzero value is green. With `low, high`,
+values at or below low are red, values at or above high are green, and values
+between are amber; low must be less than high. Custom names are case-sensitive.
+Numeric scalars and integer/float arrays are supported; `[index]` uses a
+zero-based array element, and array-only datarefs default to element zero.
+An explicit index requires an array. Missing, nonnumeric, nonfinite or unavailable
+array values show off without affecting other LEDs. Missing datarefs retry every
+five seconds and bindings refresh when the aircraft changes. Custom assignments
+use their dataref directly, without the built-in equipment/glider checks.
+
+The LED plugin reads the shared `g940FF/aircraft.ini` beside its sibling plugin
+folder; g940FF need not be enabled or installed. If the file is absent, default
+LED assignments work. Installation and ZIP packaging already include the shared
+file and preserve existing source installations' settings.
 
 ### X-Plane 12 control-loaded axes
 
@@ -258,8 +299,8 @@ equal-duration zero-force stage. Low-level forces may be imperceptible; USB
 success alone does not prove physical effect. LEDs display red/green/amber/off
 and restore their original state. Never test forces without a preparation warning.
 
-The fixed LED mapping is P1/P5 speed brakes, P2/P6 flaps, P3 carburetor heat,
-P4 autopilot, P7 landing lights, P8 gear; absent equipment shows off. Force is
+The default LED mapping is configurable in `aircraft.ini`; absent equipment
+shows off for the built-in indications. Force is
 centered gently at zero dynamic pressure, ramps with aerodynamic load, fades on pause in both
 native grip modes and restores original idle settings on normal disable/exit.
 Invalid pressure, control or trim data stops immediately. For load/access failures inspect

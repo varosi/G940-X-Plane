@@ -31,6 +31,82 @@ int main() {
     assert(tbForce.rollTrimGain == 3 && tbForce.pitchTrimGain == 1.5f);
     assert(tbForce.turbulenceGain == .015f && tbForce.stallBuffetGain == .06f);
     assert(tbForce.stallBuffetIdleRatio == .25f && tbForce.stallBuffetHz == 5.0f);
+    const std::array<LEDFunction, 8> defaultLEDs = {
+        LEDFunction::speedbrakeUpper, LEDFunction::flapsUpper, LEDFunction::carbHeat,
+        LEDFunction::autopilot, LEDFunction::speedbrakeLower, LEDFunction::flapsLower,
+        LEDFunction::landingLights, LEDFunction::gear
+    };
+    for (const auto& profile : profiles) {
+        assert(profile.leds.size() == 8);
+        assert(!profile.leds.contains(0) && !profile.leds.contains(9));
+        for (unsigned button = 1; button <= 8; ++button) assert(profile.leds.contains(button));
+    }
+    for (unsigned i = 0; i < defaultLEDs.size(); ++i) {
+        assert(ConfigProfile{}.leds.at(i + 1).function == defaultLEDs[i]);
+        assert(general.leds.at(i + 1).function == defaultLEDs[i]);
+        assert(tb10.leds.at(i + 1).function == defaultLEDs[i]);
+    }
+    // Legacy force-only configuration preserves the original LED ordering.
+    std::istringstream legacyLEDInput("[General]\nmechanical_ratio=.3\n");
+    const auto legacyLEDProfile = readAircraftConfig(legacyLEDInput).front();
+    for (unsigned i = 0; i < defaultLEDs.size(); ++i)
+        assert(legacyLEDProfile.leds.at(i + 1).function == defaultLEDs[i]);
+    struct LEDRole { const char *name; LEDFunction function; };
+    const LEDRole roles[] = {
+        {"off", LEDFunction::off}, {"red", LEDFunction::red},
+        {"green", LEDFunction::green}, {"amber", LEDFunction::amber},
+        {"speedbrake_upper", LEDFunction::speedbrakeUpper}, {"flaps_upper", LEDFunction::flapsUpper},
+        {"carb_heat", LEDFunction::carbHeat}, {"autopilot", LEDFunction::autopilot},
+        {"speedbrake_lower", LEDFunction::speedbrakeLower}, {"flaps_lower", LEDFunction::flapsLower},
+        {"landing_lights", LEDFunction::landingLights}, {"gear", LEDFunction::gear}
+    };
+    for (const auto& role : roles) {
+        std::istringstream roleInput(std::string("[General]\nled_8 = ") + role.name + " # switch assignment\n");
+        const auto configured = readAircraftConfig(roleInput).front();
+        assert(configured.leds.size() == 8 && !configured.leds.contains(0));
+        assert(configured.leds.at(8).function == role.function);
+        for (unsigned i = 0; i < 7; ++i) assert(configured.leds.at(i + 1).function == defaultLEDs[i]);
+    }
+    // General may follow the presets. Overrides affect one slot in one
+    // profile; inherited assignments must not alias another preset's values.
+    std::istringstream inheritedLEDInput("[First]\nmatch_icao=TOBA\nled_1=red\nled_8=off\n"
+        "[Second]\nmatch_icao=TRIN\nled_2=green\n"
+        "[General]\nled_1=flaps_lower\nled_2=speedbrake_lower\nled_4=amber\n");
+    const auto inheritedLEDs = readAircraftConfig(inheritedLEDInput);
+    const auto& firstLEDs = selectAircraftProfile(inheritedLEDs, "TOBA", "first.acf").leds;
+    const auto& secondLEDs = selectAircraftProfile(inheritedLEDs, "TRIN", "second.acf").leds;
+    assert(inheritedLEDs.front().leds.at(1).function == LEDFunction::flapsLower);
+    assert(firstLEDs.at(1).function == LEDFunction::red && secondLEDs.at(1).function == LEDFunction::flapsLower);
+    assert(firstLEDs.at(2).function == LEDFunction::speedbrakeLower && secondLEDs.at(2).function == LEDFunction::green);
+    assert(firstLEDs.at(4).function == LEDFunction::amber && secondLEDs.at(4).function == LEDFunction::amber);
+    assert(firstLEDs.at(8).function == LEDFunction::off && secondLEDs.at(8).function == LEDFunction::gear);
+    std::istringstream customLEDInput("[General]\nled_1=DaTaReF:My/Plugin/Value[3], -10, 100\n"
+        "led_2=dataref:My/Plugin/Enabled\nled_3=dataref:my/array[0]\n"
+        "led_4=dataref:my/extreme,-3e38,3e38\n[Inherited]\nmatch_icao=CUSTOM\n"
+        "[Override]\nmatch_icao=OFF\nled_1=off\n");
+    const auto customLEDProfiles = readAircraftConfig(customLEDInput);
+    for (const auto& profile : customLEDProfiles) {
+        assert(profile.leds.size() == 8);
+        assert(!profile.leds.contains(0) && !profile.leds.contains(9));
+    }
+    const auto& customLED = customLEDProfiles.front().leds;
+    assert(customLED.at(1).function == LEDFunction::dataref);
+    assert(customLED.at(1).dataref == "My/Plugin/Value" && customLED.at(1).index == 3);
+    assert(customLED.at(1).hasThresholds && customLED.at(1).low == -10 && customLED.at(1).high == 100);
+    assert(customLED.at(2).function == LEDFunction::dataref && customLED.at(2).dataref == "My/Plugin/Enabled");
+    assert(!customLED.at(2).index && !customLED.at(2).hasThresholds);
+    assert(customLED.at(3).index == 0 && !customLED.at(3).hasThresholds);
+    assert(customLED.at(4).hasThresholds && customLED.at(4).low < -1e38f && customLED.at(4).high > 1e38f);
+    const auto& inheritedCustomLED = selectAircraftProfile(customLEDProfiles, "CUSTOM", "unknown.acf").leds.at(1);
+    assert(inheritedCustomLED.function == LEDFunction::dataref && inheritedCustomLED.dataref == customLED.at(1).dataref);
+    assert(inheritedCustomLED.index == 3 && inheritedCustomLED.hasThresholds);
+    assert(inheritedCustomLED.low == -10 && inheritedCustomLED.high == 100);
+    const auto& overriddenCustomLED = selectAircraftProfile(customLEDProfiles, "OFF", "unknown.acf").leds.at(1);
+    assert(overriddenCustomLED.function == LEDFunction::off && overriddenCustomLED.dataref.empty());
+    assert(!overriddenCustomLED.index && !overriddenCustomLED.hasThresholds);
+    std::istringstream maximumLEDIndex("[General]\nled_8=dataref:my/array[" +
+        std::to_string(std::numeric_limits<int>::max()) + "]\n");
+    assert(readAircraftConfig(maximumLEDIndex).front().leds.at(8).index == std::numeric_limits<int>::max());
     std::istringstream cueInput("[General]\nturbulence_gain=.02\nstall_buffet_gain=.08\n"
         "stall_buffet_idle_ratio=.3\nstall_buffet_hz=4\n[Quiet]\nmatch_icao=QUIET\nstall_buffet_gain=0\n");
     const auto cueProfiles = readAircraftConfig(cueInput);
@@ -107,12 +183,32 @@ int main() {
         "[General]\nturbulence_gain=.11", "[General]\nturbulence_gain=-.01",
         "[General]\nstall_buffet_gain=.13", "[General]\nstall_buffet_idle_ratio=1.1",
         "[General]\nstall_buffet_hz=1", "[General]\nstall_buffet_hz=7",
-        "[General]\nstall_buffet_gain=nan"
+        "[General]\nstall_buffet_gain=nan",
+        "[General]\nled_0=off", "[General]\nled_9=gear", "[General]\nled_01=red",
+        "[General]\nled_1x=red", "[General]\nled_A=off", "[General]\nled1=off",
+        "[General]\nled_1=blue", "[General]\nled_2=flap_upper",
+        "[General]\nled_3=carbheat", "[General]\nled_4=1",
+        "[General]\nled_5=off\nled_5=red"
     }) {
         std::istringstream invalid(bad);
         bool rejected = false;
         try { readAircraftConfig(invalid); }
         catch (const std::runtime_error&) { rejected = true; }
+        assert(rejected);
+    }
+    for (const char *bad : {"dataref:", "dataref:[0]", "dataref:my name", "dataref:my\tname",
+         "dataref:my[", "dataref:my]", "dataref:my[]", "dataref:my[0", "dataref:my[0]tail",
+         "dataref:my[0][1]", "dataref:my[-1]", "dataref:my[2147483648]", "dataref:my[1.5]",
+         "dataref:my[1e2]", "dataref:my[ 1]", "dataref:my,0", "dataref:my,,1", "dataref:my,0,",
+         "dataref:my,0,1,2", "dataref:my,1,1", "dataref:my,2,1", "dataref:my,nan,1",
+         "dataref:my,0,nan", "dataref:my,-inf,1", "dataref:my,0,inf", "dataref:my,0,1abc"}) {
+        std::istringstream invalid(std::string("[General]\nled_1=") + bad + "\n");
+        bool rejected = false;
+        try { readAircraftConfig(invalid); }
+        catch (const std::runtime_error& error) {
+            rejected = true;
+            assert(std::string(error.what()).find("line 2 [General]") != std::string::npos);
+        }
         assert(rejected);
     }
     std::istringstream typo("[General]\npitch_trim_gian=2");

@@ -2,9 +2,12 @@
 #define G940_CONFIG_H
 
 #include "g940ForceModel.h"
+#include "g940LEDConfig.h"
+#include <charconv>
 #include <istream>
 #include <iterator>
 #include <locale>
+#include <limits>
 #include <map>
 #include <optional>
 #include <sstream>
@@ -23,6 +26,7 @@ struct ConfigProfile {
     std::optional<PitchTrimMode> pitchTrimMode;
     std::optional<float> elevatorUpDegrees, elevatorDownDegrees, staticPitchTrim;
     std::optional<float> aerodynamicGain;
+    LEDAssignments leds = defaultLEDAssignments;
 };
 
 struct AircraftGeometry {
@@ -60,6 +64,53 @@ inline float configNumber(const std::string& text, float low, float high) {
     input >> std::ws;
     if (!input.eof()) throw std::runtime_error("unexpected text after number: " + text);
     return value;
+}
+
+inline LEDAssignment configLEDAssignment(const std::string& text) {
+    const auto role = lowerConfigText(text);
+    static const std::map<std::string, LEDFunction> names = {
+        {"off", LEDFunction::off}, {"red", LEDFunction::red},
+        {"green", LEDFunction::green}, {"amber", LEDFunction::amber},
+        {"speedbrake_upper", LEDFunction::speedbrakeUpper}, {"flaps_upper", LEDFunction::flapsUpper},
+        {"carb_heat", LEDFunction::carbHeat}, {"autopilot", LEDFunction::autopilot},
+        {"speedbrake_lower", LEDFunction::speedbrakeLower}, {"flaps_lower", LEDFunction::flapsLower},
+        {"landing_lights", LEDFunction::landingLights}, {"gear", LEDFunction::gear}
+    };
+    if (const auto found = names.find(role); found != names.end()) return {found->second};
+    if (!role.starts_with("dataref:")) throw std::runtime_error("unknown LED assignment: " + text);
+    LEDAssignment assignment;
+    assignment.function = LEDFunction::dataref;
+    std::vector<std::string> parts;
+    size_t start = 8;
+    do {
+        const auto comma = text.find(',', start);
+        parts.push_back(trimConfigText(text.substr(start, comma == std::string::npos ? comma : comma - start)));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    } while (parts.size() < 4);
+    if (parts.size() != 1 && parts.size() != 3)
+        throw std::runtime_error("expected dataref:name[index] with optional , low, high thresholds");
+    auto& name = parts.front();
+    if (const auto bracket = name.find('['); bracket != std::string::npos) {
+        if (name.back() != ']') throw std::runtime_error("unfinished LED dataref array index");
+        const auto indexText = name.substr(bracket + 1, name.size() - bracket - 2);
+        int index = -1;
+        const auto parsed = std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
+        if (parsed.ec != std::errc{} || parsed.ptr != indexText.data() + indexText.size() || index < 0)
+            throw std::runtime_error("LED dataref index must be a nonnegative integer");
+        assignment.index = index;
+        name.erase(bracket);
+    }
+    if (name.empty() || name.find_first_of(" \t\r\n[]") != std::string::npos)
+        throw std::runtime_error("invalid LED dataref name");
+    assignment.dataref = name; // Custom dataref names are case-sensitive.
+    if (parts.size() == 3) {
+        assignment.hasThresholds = true;
+        assignment.low = configNumber(parts[1], std::numeric_limits<float>::lowest(), std::numeric_limits<float>::max());
+        assignment.high = configNumber(parts[2], std::numeric_limits<float>::lowest(), std::numeric_limits<float>::max());
+        if (assignment.low >= assignment.high) throw std::runtime_error("LED thresholds require low < high");
+    }
+    return assignment;
 }
 
 inline std::vector<ConfigProfile> readAircraftConfig(std::istream& input) {
@@ -120,6 +171,11 @@ inline std::vector<ConfigProfile> readAircraftConfig(std::istream& input) {
                 const auto& value = setting.value;
                 if (key == "match_icao") profile.icao = configList(value);
                 else if (key == "match_acf") profile.acf = configList(value);
+                else if (key.starts_with("led_")) {
+                    if (key.size() != 5 || key[4] < '1' || key[4] > '8')
+                        throw std::runtime_error("LED keys must be led_1 through led_8");
+                    profile.leds.at(key[4] - '0') = configLEDAssignment(value);
+                }
                 else if (key == "reference_speed_knots")
                     profile.referenceKnots = lowerConfigText(value) == "auto" ? 0.0f : configNumber(value, 1, 1000);
                 else if (key == "fallback_reference_speed_knots") profile.fallbackKnots = configNumber(value, 1, 1000);

@@ -198,6 +198,44 @@ including feature-10 transfer performance during buffet.
 
 ## Aircraft configuration
 
+Both plugins read `Resources/plugins/g940FF/aircraft.ini` on enable, selecting
+the same General/aircraft presets. The LED plugin locates the file relative to
+its own native plugin path; it does not require a running force-feedback plugin.
+Missing files retain defaults. Both plugins reject malformed shared settings
+before registering a flight callback or opening a device.
+
+### LED configuration
+
+`led_1`–`led_8` assign P1–P8. Built-ins are `speedbrake_upper`, `speedbrake_lower`,
+`flaps_upper`, `flaps_lower`, `carb_heat`, `autopilot`, `landing_lights` and `gear`;
+`off`, `red`, `green` and `amber` select fixed colors. Unspecified slots retain
+the original assignments, and aircraft presets inherit General per slot.
+Travel thresholds remain 0.125/0.375 for upper and 0.625/0.875 for lower;
+carb heat/gear use red at <= 0, green at >= 1 and amber between. Built-in
+equipment/glider checks are unchanged.
+
+Custom syntax is `dataref:exact/name[index]` or
+`dataref:exact/name[index], low, high`. Names preserve case. Indices are optional
+nonnegative integers; an explicit index requires an integer or float array.
+Without an index, scalar float, double, then integer types take precedence;
+array-only refs use element zero, preferring float arrays over integer arrays.
+Without thresholds, zero is red and nonzero green; otherwise finite low < high
+maps <= low to red, >= high to green and intermediate values to amber.
+Reads are type-checked, read-only, and array read counts must equal one.
+Custom handles are checked for orphaned providers before reading, so a provider
+unload shows off instead of interpreting the SDK's orphaned scalar zero as red.
+Double datarefs are compared without narrowing to float.
+Missing refs, incompatible types, short reads or nonfinite values map only that
+LED to off. Custom assignments do not apply built-in equipment conditions.
+
+Bindings are resolved on enable/aircraft selection, including user-plane load
+notifications but excluding AI loads. Unresolved refs retry every five seconds;
+diagnostics for a missing/incompatible custom binding are emitted once until
+it resolves or the profile changes. Configuration is not read in the flight loop.
+LED updates keep the existing 0.2-second callback and backend report encoding.
+
+### Force configuration
+
 `Resources/plugins/g940FF/aircraft.ini` contains an INI `[General]` fallback
 and aircraft presets inheriting its values. Selection prefers exact ICAO codes
 from `sim/aircraft/view/acf_ICAO`, then filename globs from
