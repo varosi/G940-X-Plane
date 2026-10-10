@@ -1,4 +1,4 @@
-# TB20 turbulence and stall cues: evidence and limits
+# TB20 tactile cues: evidence and limits
 
 This research guides experimental G940 feedback. It is not a measured TB20
 yoke-force model. The sources describe aircraft handling qualitatively; they
@@ -94,3 +94,34 @@ tail exclusion, horn-only warnings, power scaling, missing/short/invalid data,
 frame delays, pause/reconnect, trim headroom and backend parity. Later tests
 must assess actual feel, sign, strength, timing, transfer rate and grip release.
 No physical test was run and the earlier grip-release kick remains unresolved.
+
+## Ground and landing cues
+
+Ground roughness and landing impacts follow X-Plane's actual gear support force,
+normalized by current aircraft mass, plus measured roll/pitch acceleration.
+This captures the model's response to its gear, loading and surface conditions
+rather than imposing a generic runway vibration or a fixed touchdown kick.
+Gradual support transfer produces a smaller transient than a sharp change;
+static parked weight produces none. Landing gain stays active briefly for the
+main/nose-wheel sequence and short bounces. No pulse is generated from a
+ground-contact flag alone.
+
+Laminar documents [force units and rotation signs](https://developer.x-plane.com/article/movingtheplane/)
+and [aircraft body axes](https://www.x-plane.com/kb/data-set-output-table/).
+The installed X-Plane 11/12 dataref registries confirm `fnrml_gear` in newtons,
+`m_total` in kilograms and `P_dot`/`Q_dot` in degrees/s². Measured angular
+acceleration avoids inferring current inertia from static aircraft metadata;
+it includes aerodynamic and other forces as well as gear reaction.
+
+Support force is not net cockpit acceleration, and actual yoke vibration
+depends on mechanical coupling and pilot grip. The chosen filters, signs,
+rotation scaling and Socata gains (`ground_bump_gain = 0.02`,
+`landing_bump_gain = 0.04`) are provisional simulator tuning. They are not
+manufacturer measurements or a calibrated TB20 suspension/control-column
+model. General leaves these effects disabled. Software checks cannot confirm
+their physical feel while the G940 is disconnected.
+
+The cues share the existing motor caps, trim headroom and live/idle center
+mapping with air cues. Startup, pause/replay, reloads and detected position
+jumps re-prime history. Missing telemetry suppresses its own channel; ordinary
+force feedback remains available. See [exact filters and guards](PROTOCOL.md#ground-and-landing-cues).

@@ -186,7 +186,7 @@ There is no second effect slot, new vendor waveform or direct constant command
 that disappears on grip release. Existing motor coefficients and caps remain.
 Damping-only profiles cannot render spring-center cues.
 
-Missing ground state, ground contact, replay or crash suppresses cues. Optional
+Missing ground state, ground contact, replay or crash suppresses air cues. Optional
 missing wind/attitude or stall arrays disables the corresponding channel.
 Near-zero airflow scales cues with `clamp(q / 100 Pa, 0, 1)`. Cue output fades
 with a 120 ms time constant on suppression/pause, alongside the existing
@@ -195,6 +195,49 @@ history. Updates slower than 20 Hz fade the sampled waveform to avoid aliasing;
 invalid timing clears cues. World-wind jumps greater than 20 m/s re-prime the
 wind baseline. These filters, thresholds and gains require hardware tuning,
 including feature-10 transfer performance during buffet.
+
+## Ground and landing cues
+
+Read `sim/flightmodel/forces/fnrml_gear` (upward gear support, N) and
+`sim/flightmodel/weight/m_total` (current mass, kg). Their ratio divided by
+9.80665 m/s² gives support in weight units. This is gear loading, not net
+occupant acceleration: lift can still support weight at touchdown. Do not
+subtract a fixed 1g threshold. `sim/flightmodel/position/P_dot` and `Q_dot`
+(degrees/s², positive right roll/nose up) add the aircraft's actual rotational
+response. They include all aircraft forces, not just gear moments; current
+inertia is already reflected in that response.
+
+Each independent channel removes a 350 ms low-pass mean and filters the
+residual with a 30 ms low-pass. Static support settles to zero; compression,
+unloading, nose-wheel contact and bounce transients follow the flight model.
+Pitch offset is `-gain * (supportResidual + Q_dotResidual / 60)`; roll is
+`-gain * P_dotResidual / 60`. The sign and 60 degrees/s² normalization are
+provisional tactile mappings, not measured yoke inertia. Inputs are bounded
+to ±20 weight units and ±1200 degrees/s² before filtering; output retains the
+shared ±0.12 center-travel and 3 units/s slew budget with air cues.
+
+Contact comes from `sim/flightmodel/failures/onground_any`. Moving-ground gain
+ramps from zero at 0.5 m/s to `ground_bump_gain` at 2 m/s using `groundspeed`.
+After at least 250 ms of observed airborne state, ground contact selects
+`landing_bump_gain` for two seconds, independent of forward speed. The larger
+of landing and moving-ground gain is used; landing gain fades with a smoothstep
+over the final 500 ms. This window covers the initial
+main/nose-wheel sequence and short bounces; later jolts still use ground gain.
+It changes gain only: contact without a measured transient creates no pulse.
+Signals keep updating airborne, preserving real touchdown load changes.
+
+Missing mass/load disables only support cues; missing rotation disables only
+that axis. Invalid/recovered channels re-prime independently. Missing ground
+state, replay, crash, pause or callbacks slower than 20 Hz fade and re-prime
+the ground model. Startup, reconnect, aircraft reload and `AIRPORT_LOADED`
+clear history. Ordinary `SCENERY_LOADED` tile streaming does not reset cues.
+Optional `local_x/y/z` (metres) and `local_vy` (m/s) detect position jumps:
+horizontal displacement over `25 m + 2 * groundspeed * dt`, or vertical
+displacement over `25 m + 2 * abs(local_vy) * dt`, re-primes the sample.
+The SDK's double coordinates are retained only for this comparison; force
+math remains float. Missing position telemetry leaves this jump guard
+unavailable; missing ground/vertical speed disables only its horizontal/vertical
+comparison. Large genuine forces are capped, not mistaken for relocation.
 
 ## Aircraft configuration
 
@@ -220,6 +263,8 @@ Enabling the plugin reloads the file, while normal callbacks do no file I/O.
 | `stall_buffet_gain` | 0–0.12 peak normalized pitch-center displacement; General 0, Socata 0.06 |
 | `stall_buffet_idle_ratio` | 0–1 fraction of powered buffet at idle; default 0.25 |
 | `stall_buffet_hz` | 2–6 Hz main frequency; default 5; second component at 1.37 times this |
+| `ground_bump_gain` | 0–0.12 center displacement per transient support weight unit; General 0, Socata 0.02; rotation also scaled by gain |
+| `landing_bump_gain` | 0–0.12; same scaling during the two-second touchdown window; General 0, Socata 0.04 |
 | `roll_trim_gain`, `pitch_trim_gain` | −10–10; multiplier of live normalized trim |
 | `pitch_aoa_deflection_gain` | −15–15 degrees free elevator per degree AoA; default 0.45 |
 | `pitch_aoa_gain` | Legacy alias, −1–1 normalized units at 15-degree travel; multiplied by 15; do not specify both gains in one section |

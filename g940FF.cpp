@@ -13,7 +13,7 @@
 #include "XPLMUtilities.h"
 #include "g940Backend.h"
 #include "g940Config.h"
-#include "g940CueModel.h"
+#include "g940GroundModel.h"
 
 #ifndef XPLM300
 #error This plugin requires the XPLM300 API
@@ -26,17 +26,29 @@ XPLMDataRef elevatorUpRef, elevatorDownRef, staticPitchTrimRef, stabilizerUpRef,
 XPLMDataRef windRefs[3], attitudeRefs[3], stalledRef, wingAreaRef, powerRef, maximumPowerRef;
 XPLMDataRef onGroundRef, replayRef, crashedRef;
 XPLMDataRef engineCountRef, legacyMaximumPowerRef;
+XPLMDataRef gearForceRef, massRef, rollAccelerationRef, pitchAccelerationRef, groundSpeedRef;
+XPLMDataRef positionRefs[3], verticalSpeedRef;
 std::filesystem::path configFile;
 std::vector<g940::ConfigProfile> profiles = {g940::ConfigProfile{}};
 g940::AircraftProfile aircraftProfile;
 bool profileDirty = true;
 bool enabled = false;
 bool forceReady = false;
+bool cuesDirty = false;
 g940::ForceSmoother forceSmoother;
 g940::FlightCues flightCues;
+g940::GroundCues groundCues;
+g940::CueMixer cueMixer;
 #ifdef G940_DEBUG_FORCE
 std::chrono::steady_clock::time_point nextForceTrace;
 #endif
+
+void resetCues() {
+    flightCues.reset();
+    groundCues.reset();
+    cueMixer.reset();
+    cuesDirty = false;
+}
 
 void reportError() {
     const std::string message = std::string("G940 FF: ") + g940::backendError() + "\n";
@@ -131,6 +143,28 @@ g940::CueSample readCueSample(float pressurePa) {
     return sample;
 }
 
+g940::GroundSample readGroundSample() {
+    g940::GroundSample sample;
+    sample.contactValid = onGroundRef && (!replayRef || !XPLMGetDatai(replayRef)) &&
+        (!crashedRef || !XPLMGetDatai(crashedRef));
+    if (!sample.contactValid) return sample;
+    sample.onGround = XPLMGetDatai(onGroundRef) != 0;
+    const auto optionalFloat = [](XPLMDataRef ref) {
+        return ref ? XPLMGetDataf(ref) : std::numeric_limits<float>::quiet_NaN();
+    };
+    const float force = optionalFloat(gearForceRef), mass = optionalFloat(massRef);
+    if (std::isfinite(force) && std::isfinite(mass) && mass > 0.0f)
+        sample.supportG = (force / mass) / 9.80665f;
+    sample.rollAcceleration = optionalFloat(rollAccelerationRef);
+    sample.pitchAcceleration = optionalFloat(pitchAccelerationRef);
+    sample.groundSpeed = optionalFloat(groundSpeedRef);
+    sample.verticalSpeed = optionalFloat(verticalSpeedRef);
+    sample.positionValid = positionRefs[0] && positionRefs[1] && positionRefs[2];
+    if (sample.positionValid)
+        for (unsigned axis = 0; axis < 3; ++axis) sample.position[axis] = XPLMGetDatad(positionRefs[axis]);
+    return sample;
+}
+
 float flightLoopCallback(float elapsed, float, int, void *) {
     if (profileDirty) {
         if (forceReady && !g940::releaseForceFeedback()) {
@@ -138,26 +172,28 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         }
         forceReady = false;
         forceSmoother.reset();
-        flightCues.reset();
+        resetCues();
         selectProfile();
         profileDirty = false;
     }
+    if (cuesDirty) resetCues();
     if (!g940::prepareForceFeedback()) {
-        reportError(); forceReady = false; forceSmoother.reset(); flightCues.reset(); return 5.0f;
+        reportError(); forceReady = false; forceSmoother.reset(); resetCues(); return 5.0f;
     }
     if (XPLMGetDatai(pausedRef)) {
         if (!forceReady) return 0.2f;
 #ifdef G940_DEBUG_FORCE
         const bool startingRelease = !forceSmoother.releasing();
 #endif
-        const g940::ForceState state = g940::withCues(forceSmoother.release(elapsed), flightCues.release(elapsed));
+        const g940::ForceState state = g940::withCues(forceSmoother.release(elapsed),
+            cueMixer.update(flightCues.release(elapsed), groundCues.release(elapsed), elapsed));
         if (!state.hasLoad() || state.effectScale <= 0.0f) {
             if (!g940::releaseForceFeedback()) {
                 reportError(); g940::closeForceFeedback();
             }
             forceReady = false;
             forceSmoother.reset();
-            flightCues.reset();
+            resetCues();
 #ifdef G940_DEBUG_FORCE
             XPLMDebugString("G940 FF trace: paused force released\n");
 #endif
@@ -167,7 +203,7 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         if (startingRelease) XPLMDebugString("G940 FF trace: one-second pause fade started\n");
 #endif
         if (!g940::updateForceFeedback(state)) {
-            reportError(); forceReady = false; forceSmoother.reset(); flightCues.reset(); return 0.2f;
+            reportError(); forceReady = false; forceSmoother.reset(); resetCues(); return 0.2f;
         }
         return 0.02f;
     }
@@ -176,7 +212,7 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         if (!g940::openForceFeedback()) { reportError(); return 5.0f; }
         forceReady = true;
         forceSmoother.reset();
-        flightCues.reset();
+        resetCues();
 #ifdef G940_DEBUG_FORCE
         nextForceTrace = std::chrono::steady_clock::time_point();
 #endif
@@ -193,8 +229,10 @@ float flightLoopCallback(float elapsed, float, int, void *) {
         roll, pitch, pressurePa, alpha, elevatorTrim, aileronTrim, aircraftProfile, stabilizer);
     if (startingForce) forceSmoother.reset(target);
     g940::ForceState state = forceSmoother.update(target, elapsed);
-    if (target.hasLoad()) state = g940::withCues(state, flightCues.update(readCueSample(pressurePa), aircraftProfile, elapsed));
-    else flightCues.reset();
+    if (target.hasLoad()) state = g940::withCues(state, cueMixer.update(
+        flightCues.update(readCueSample(pressurePa), aircraftProfile, elapsed),
+        groundCues.update(readGroundSample(), aircraftProfile, elapsed), elapsed));
+    else resetCues();
 #ifdef G940_DEBUG_FORCE
     const auto now = std::chrono::steady_clock::now();
     if (now >= nextForceTrace) {
@@ -216,7 +254,7 @@ float flightLoopCallback(float elapsed, float, int, void *) {
     }
 #endif
     if (!g940::updateForceFeedback(state)) {
-        reportError(); forceReady = false; flightCues.reset(); return 5.0f;
+        reportError(); forceReady = false; resetCues(); return 5.0f;
     }
     return 0.02f;
 }
@@ -276,6 +314,14 @@ PLUGIN_API int XPluginStart(char *outName, char *outSig, char *outDesc) {
     onGroundRef = XPLMFindDataRef("sim/flightmodel/failures/onground_any");
     replayRef = XPLMFindDataRef("sim/time/is_in_replay");
     crashedRef = XPLMFindDataRef("sim/flightmodel2/misc/has_crashed");
+    gearForceRef = XPLMFindDataRef("sim/flightmodel/forces/fnrml_gear");
+    massRef = XPLMFindDataRef("sim/flightmodel/weight/m_total");
+    rollAccelerationRef = XPLMFindDataRef("sim/flightmodel/position/P_dot");
+    pitchAccelerationRef = XPLMFindDataRef("sim/flightmodel/position/Q_dot");
+    groundSpeedRef = XPLMFindDataRef("sim/flightmodel/position/groundspeed");
+    const char *positionNames[] = {"sim/flightmodel/position/local_x", "sim/flightmodel/position/local_y", "sim/flightmodel/position/local_z"};
+    for (unsigned axis = 0; axis < 3; ++axis) positionRefs[axis] = XPLMFindDataRef(positionNames[axis]);
+    verticalSpeedRef = XPLMFindDataRef("sim/flightmodel/position/local_vy");
     return 1;
 }
 
@@ -295,11 +341,13 @@ PLUGIN_API void XPluginDisable() {
     if (!g940::closeForceFeedback()) reportError();
     forceReady = false;
     forceSmoother.reset();
-    flightCues.reset();
+    resetCues();
 }
 
 PLUGIN_API void XPluginStop() { XPluginDisable(); }
 PLUGIN_API void XPluginReceiveMessage(XPLMPluginID sender, int message, void *parameter) {
     if (sender == XPLM_PLUGIN_XPLANE && message == XPLM_MSG_PLANE_LOADED && parameter == nullptr)
         profileDirty = true;
+    if (sender == XPLM_PLUGIN_XPLANE && message == XPLM_MSG_AIRPORT_LOADED)
+        cuesDirty = true;
 }

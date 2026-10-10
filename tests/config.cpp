@@ -14,6 +14,8 @@ int main() {
     assert(general.name == "General");
     assert(general.referenceKnots == 0 && general.force.rollTrimGain == 1 && general.force.pitchTrimGain == 1);
     assert(general.force.turbulenceGain == 0 && general.force.stallBuffetGain == 0);
+    assert(general.force.groundBumpGain == 0 && general.force.landingBumpGain == 0);
+    assert(defaultProfile.groundBumpGain == 0 && defaultProfile.landingBumpGain == 0);
     assert(referenceSpeed(general, 340) == 340);
     assert(resolveAircraftProfile(general, 340).referencePressurePa > 18000);
     for (float invalidVne : {0.0f, -1.0f, 1001.0f, std::numeric_limits<float>::infinity(),
@@ -31,11 +33,21 @@ int main() {
     assert(tbForce.rollTrimGain == 3 && tbForce.pitchTrimGain == 1.5f);
     assert(tbForce.turbulenceGain == .015f && tbForce.stallBuffetGain == .06f);
     assert(tbForce.stallBuffetIdleRatio == .25f && tbForce.stallBuffetHz == 5.0f);
+    assert(tbForce.groundBumpGain == .02f && tbForce.landingBumpGain == .04f);
     std::istringstream cueInput("[General]\nturbulence_gain=.02\nstall_buffet_gain=.08\n"
         "stall_buffet_idle_ratio=.3\nstall_buffet_hz=4\n[Quiet]\nmatch_icao=QUIET\nstall_buffet_gain=0\n");
     const auto cueProfiles = readAircraftConfig(cueInput);
     assert(cueProfiles.back().force.turbulenceGain == .02f && cueProfiles.back().force.stallBuffetGain == 0);
     assert(cueProfiles.back().force.stallBuffetIdleRatio == .3f && cueProfiles.back().force.stallBuffetHz == 4);
+    std::istringstream groundInput("[Quiet]\nmatch_icao=QUIET\nground_bump_gain=0\n"
+        "[Maximum]\nmatch_icao=MAX\nlanding_bump_gain=.12\n"
+        "[General]\nground_bump_gain=.02\nlanding_bump_gain=.06\n");
+    const auto groundProfiles = readAircraftConfig(groundInput);
+    const auto& quietGround = selectAircraftProfile(groundProfiles, "QUIET", "unknown.acf").force;
+    const auto& maximumGround = selectAircraftProfile(groundProfiles, "MAX", "unknown.acf").force;
+    assert(quietGround.groundBumpGain == 0 && quietGround.landingBumpGain == .06f);
+    assert(maximumGround.groundBumpGain == .02f && maximumGround.landingBumpGain == .12f);
+    assert(groundProfiles.front().force.groundBumpGain == .02f && groundProfiles.front().force.landingBumpGain == .06f);
     const auto trimmed = calculateForce(0, 0, tbForce.referencePressurePa / 2, 0, .5f, .1f, tbForce);
     assert(std::abs(trimmed.pitch - .5f) < 1e-6 && std::abs(trimmed.roll - .2f) < 1e-6);
 
@@ -107,7 +119,11 @@ int main() {
         "[General]\nturbulence_gain=.11", "[General]\nturbulence_gain=-.01",
         "[General]\nstall_buffet_gain=.13", "[General]\nstall_buffet_idle_ratio=1.1",
         "[General]\nstall_buffet_hz=1", "[General]\nstall_buffet_hz=7",
-        "[General]\nstall_buffet_gain=nan"
+        "[General]\nstall_buffet_gain=nan",
+        "[General]\nground_bump_gain=-.001", "[General]\nground_bump_gain=.121",
+        "[General]\nground_bump_gain=nan", "[General]\nlanding_bump_gain=-.001",
+        "[General]\nlanding_bump_gain=.121", "[General]\nlanding_bump_gain=inf",
+        "[General]\nground_bump_gian=.02"
     }) {
         std::istringstream invalid(bad);
         bool rejected = false;

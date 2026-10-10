@@ -111,6 +111,28 @@ rate or smooth grip transitions in flight. No new hardware observation resolves
 the prior early near-center kick. The source installer preserves existing
 `aircraft.ini`; older configurations need the new Socata gains enabled explicitly.
 
+## Ground and landing revision, 2026-10-10
+
+The realism branch now maps actual gear-load transients and roll/pitch
+acceleration to rough-ground and touchdown cues. Socata enables provisional
+gains of 0.02/0.04; General keeps them disabled. There is no generated runway
+noise or contact-triggered landing pulse. Steady parked support is filtered
+out, and soft/sharp impacts follow the model's measured response.
+
+Software checks cover quiet parked loads, rough-ground oscillations, soft/sharp
+load transfers, stationary touchdown, nose-wheel/bounce timing, missing-channel
+recovery, relocation and pause/replay resets, combined cue caps and live/idle
+center parity. The universal macOS release/debug builds and seven C++ plus ten
+Python checks pass. Release plugins contain no assertions, debug sections or
+force traces.
+
+The G940 remains disconnected; no motor test or plugin installation was run.
+Later checks should compare smooth/rough taxiing, gentle/firm landings, nose-wheel
+lowering, bounces, pause and grip release in the same tested aircraft. Physical
+sign, perceptibility and feature-10 timing remain unverified. Warn the user and
+wait for readiness before any force test. Existing installations preserve
+`aircraft.ini`, so add `ground_bump_gain`/`landing_bump_gain` to enable these cues.
+
 ## Settings and firmware analysis
 
 Original volatile reports were independently verified after comparisons:

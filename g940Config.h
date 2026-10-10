@@ -108,6 +108,8 @@ inline std::vector<ConfigProfile> readAircraftConfig(std::istream& input) {
             {"stall_buffet_gain", &AircraftProfile::stallBuffetGain, 0.0f, 0.12f},
             {"stall_buffet_idle_ratio", &AircraftProfile::stallBuffetIdleRatio, 0.0f, 1.0f},
             {"stall_buffet_hz", &AircraftProfile::stallBuffetHz, 2.0f, 6.0f},
+            {"ground_bump_gain", &AircraftProfile::groundBumpGain, 0.0f, 0.12f},
+            {"landing_bump_gain", &AircraftProfile::landingBumpGain, 0.0f, 0.12f},
             {"roll_trim_gain", &AircraftProfile::rollTrimGain, -10.0f, 10.0f},
             {"pitch_trim_gain", &AircraftProfile::pitchTrimGain, -10.0f, 10.0f},
             {"pitch_aoa_deflection_gain", &AircraftProfile::pitchAoADeflectionGain, -15.0f, 15.0f},

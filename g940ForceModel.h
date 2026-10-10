@@ -37,6 +37,8 @@ struct AircraftProfile {
     float stallBuffetGain = 0.0f; // peak normalized pitch-center displacement
     float stallBuffetIdleRatio = 0.25f;
     float stallBuffetHz = 5.0f;
+    float groundBumpGain = 0.0f; // normalized center displacement per transient support g
+    float landingBumpGain = 0.0f;
     float rollTrimGain = 1.0f;
     float pitchTrimGain = 1.0f;
     float pitchAoADeflectionGain = 0.45f; // degrees of elevator / degree of AoA

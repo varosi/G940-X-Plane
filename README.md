@@ -24,6 +24,8 @@ The Socata preset also enables experimental gust and natural stall-buffet cues,
 based on [TB20 manufacturer evidence](tools/TB20_EFFECTS.md). Gusts follow local
 wind changes; buffet follows main-wing separation and increases with engine
 power. These are bounded tactile approximations, with hardware tuning pending.
+Rough-ground and landing cues follow actual gear-load changes and the aircraft's
+roll/pitch jolts, so smooth taxiing and gentle touchdowns produce weaker cues.
 
 ## Build
 
@@ -180,6 +182,17 @@ Upgrading preserves your existing configuration. To enable these effects in an
 older installation, add `turbulence_gain = 0.015` and `stall_buffet_gain = 0.06`
 to your existing Socata preset and reload the plugin. Setting either gain to
 zero disables that cue. No settings are written to joystick preferences.
+
+`ground_bump_gain` controls moving-ground bumps; `landing_bump_gain` controls
+touchdown jolts, including the following nose-wheel contact and short bounces.
+Both accept 0–0.12 and default to zero in General. Socata starts at 0.02 and
+0.04; add these keys to an existing Socata configuration to enable them.
+Gear support force is normalized by the aircraft's current mass, with measured
+roll/pitch acceleration adding direction. Filtering removes steady parked loads;
+there is no random runway shaking or fixed landing pulse. These effects work
+with mechanical spring resistance even at zero airspeed. Reloads, pause/replay
+and detected position jumps re-prime the history. Hardware tuning is pending;
+see [ground-cue assumptions](tools/TB20_EFFECTS.md#ground-and-landing-cues).
 
 macOS/Windows render the combined spring and damper through native channels.
 Linux uses one constant-force effect for the G940 because its original driver

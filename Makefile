@@ -130,6 +130,8 @@ test: $(SDK_HEADER)
 	"$(BUILDDIR)/tests/protocol"
 	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/cues.cpp -I. -o "$(BUILDDIR)/tests/cues"
 	"$(BUILDDIR)/tests/cues"
+	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/ground.cpp -I. -o "$(BUILDDIR)/tests/ground"
+	"$(BUILDDIR)/tests/ground"
 	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/config.cpp -I. -o "$(BUILDDIR)/tests/config"
 	"$(BUILDDIR)/tests/config"
 	$(CXX) $(CPPFLAGS) $(SDK_CPPFLAGS) $(PLATFORM_CPPFLAGS) $(TEST_CXXFLAGS) $(ARCH_FLAGS) tests/plugin_host.cpp -I. -o "$(BUILDDIR)/tests/force-feedback"

@@ -19,6 +19,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,8 +30,14 @@ PLUGIN_API void XPluginStop();
 PLUGIN_API void XPluginReceiveMessage(XPLMPluginID, int, void *);
 
 namespace {
-enum Type { DATA_INTEGER, DATA_FLOAT, DATA_INTEGERS, DATA_FLOATS, DATA_BYTES };
-struct Ref { Type type; float value; std::string text = {}; std::vector<float> values = {}; };
+enum Type { DATA_INTEGER, DATA_FLOAT, DATA_DOUBLE, DATA_INTEGERS, DATA_FLOATS, DATA_BYTES };
+struct Ref {
+    Type type;
+    float value;
+    std::string text = {};
+    std::vector<float> values = {};
+    std::optional<double> doubleValue = {};
+};
 std::map<std::string, Ref> refs;
 XPLMFlightLoop_f callback = nullptr;
 int registrations = 0, unregistrations = 0;
@@ -67,6 +74,10 @@ void XPLMGetNthAircraftModel(int index, char *name, char *path) {
 }
 int XPLMGetDatai(XPLMDataRef data) { assert(ref(data).type == DATA_INTEGER); return ref(data).value; }
 float XPLMGetDataf(XPLMDataRef data) { assert(ref(data).type == DATA_FLOAT); return ref(data).value; }
+double XPLMGetDatad(XPLMDataRef data) {
+    assert(ref(data).type == DATA_DOUBLE);
+    return ref(data).doubleValue.value_or(ref(data).value);
+}
 int XPLMGetDatab(XPLMDataRef data, void *out, int offset, int count) {
     assert(ref(data).type == DATA_BYTES && offset == 0);
     const int copied = std::min(count, static_cast<int>(ref(data).text.size()));
@@ -513,6 +524,205 @@ int main() {
     refs["sim/time/paused"].value = 1;
     for (int i = 0; i < 150; ++i) callback(.02f, 0, 0, nullptr);
     assert(releases > releasesBeforeCuePause && std::abs(observedForce.pitchCue) < .0001f);
+    XPluginStop();
+
+    // Ground cues use actual gear/support loads and body angular acceleration,
+    // independently of airspeed and of the optional airborne cue channels.
+    constexpr const char *gearLoadName = "sim/flightmodel/forces/fnrml_gear";
+    constexpr const char *massName = "sim/flightmodel/weight/m_total";
+    constexpr const char *groundSpeedName = "sim/flightmodel/position/groundspeed";
+    constexpr const char *rollAccelerationName = "sim/flightmodel/position/P_dot";
+    constexpr const char *pitchAccelerationName = "sim/flightmodel/position/Q_dot";
+    constexpr const char *verticalVelocityName = "sim/flightmodel/position/local_vy";
+    constexpr const char *groundStateName = "sim/flightmodel/failures/onground_any";
+    constexpr float weightNewtons = 1000.0f * 9.80665f;
+    refs.emplace(gearLoadName, Ref{DATA_FLOAT, weightNewtons});
+    refs.emplace(massName, Ref{DATA_FLOAT, 1000});
+    refs.emplace(groundSpeedName, Ref{DATA_FLOAT, 5});
+    refs.emplace(rollAccelerationName, Ref{DATA_FLOAT, 0});
+    refs.emplace(pitchAccelerationName, Ref{DATA_FLOAT, 0});
+    refs.emplace(verticalVelocityName, Ref{DATA_FLOAT, 0});
+    for (const char *position : {"sim/flightmodel/position/local_x", "sim/flightmodel/position/local_y",
+                                "sim/flightmodel/position/local_z"})
+        refs.emplace(position, Ref{DATA_DOUBLE, 0, {}, {}, 1000000000000.125});
+    const auto resetGroundTelemetry = [&]() {
+        assert(!callback);
+        resetTelemetry();
+        refs[stalledName].values.assign(480, 0);
+        refs["sim/flightmodel/misc/Qstatic"].value = 0;
+        refs["sim/flightmodel2/controls/elevator_trim"].value = 0;
+        refs["sim/flightmodel2/controls/aileron_trim"].value = 0;
+        refs[groundStateName].value = 1;
+        refs[gearLoadName].value = weightNewtons;
+        refs[massName].value = 1000;
+        refs[groundSpeedName].value = 5;
+        refs[rollAccelerationName].value = refs[pitchAccelerationName].value = 0;
+        refs[verticalVelocityName].value = 0;
+        for (const char *position : {"sim/flightmodel/position/local_x", "sim/flightmodel/position/local_y",
+                                    "sim/flightmodel/position/local_z"})
+            refs[position].doubleValue = 1000000000000.125;
+    };
+    const auto groundStep = [&]() {
+        callback(.02f, 0, 0, nullptr);
+        assert(deviceOpen && observedForce.hasLoad());
+        assert(std::isfinite(observedForce.rollCue) && std::isfinite(observedForce.pitchCue));
+        assert(std::abs(observedForce.rollCue) <= .120001f && std::abs(observedForce.pitchCue) <= .120001f);
+    };
+    const auto settleGround = [&]() {
+        for (int i = 0; i < 150; ++i) groundStep();
+        assert(std::abs(observedForce.rollCue) < 1e-5f && std::abs(observedForce.pitchCue) < 1e-5f);
+    };
+    const auto beginGroundFlight = [&]() {
+        XPluginStop();
+        std::ofstream(configFolder / "aircraft.ini") << "[General]\nreference_speed_knots=125\npitch_aoa_gain=0\n"
+            "turbulence_gain=0\nstall_buffet_gain=0\nground_bump_gain=.02\nlanding_bump_gain=.04\n";
+        assert(XPluginStart(name, signature, description) == 1);
+        assert(XPluginEnable() == 1 && callback);
+        settleGround();
+        assert(observedForce.aerodynamicRatio == 0 && std::abs(observedForce.springRatio() - .2f) < .001f);
+    };
+    resetGroundTelemetry();
+    beginGroundFlight(); // initially loaded on the ground is not a landing
+    refs[gearLoadName].value = weightNewtons * 1.8f;
+    groundStep();
+    assert(std::abs(observedForce.pitchCue) > 1e-5f && observedForce.rollCue == 0);
+    const auto groundForceReport = g940::forceReport(observedForce);
+    const auto groundIdleCenter = g940::idleCenterReport(groundForceReport);
+    const auto signed16 = [](uint8_t low, uint8_t high) {
+        return static_cast<int16_t>(static_cast<uint16_t>(low) | static_cast<uint16_t>(high) << 8);
+    };
+    const int livePitchCenter = signed16(groundForceReport[37], groundForceReport[38]);
+    const int idlePitchCenter = signed16(groundIdleCenter[3], groundIdleCenter[4]);
+    assert(livePitchCenter == idlePitchCenter && livePitchCenter != 0);
+    assert(std::abs(livePitchCenter / 32767.0f - observedForce.center(1)) < 1.0f / 32767.0f);
+    settleGround(); // a steady load is not a continuous invented vibration
+    refs[rollAccelerationName].value = 30;
+    groundStep();
+    assert(observedForce.rollCue != 0);
+    const float positiveRollCue = observedForce.rollCue;
+    refs[rollAccelerationName].value = 0;
+    settleGround();
+    refs[rollAccelerationName].value = -30;
+    groundStep();
+    assert(observedForce.rollCue * positiveRollCue < 0);
+
+    // Stationary controls keep mechanical resistance without taxi vibration.
+    XPluginStop(); resetGroundTelemetry(); refs[groundSpeedName].value = 0;
+    beginGroundFlight();
+    refs[gearLoadName].value = weightNewtons * 2;
+    refs[rollAccelerationName].value = 30;
+    groundStep();
+    assert(observedForce.rollCue == 0 && observedForce.pitchCue == 0);
+    const auto landingPeak = [&](float supportG) {
+        XPluginStop(); resetGroundTelemetry();
+        refs[groundStateName].value = 0;
+        refs[gearLoadName].value = 0;
+        beginGroundFlight(); // observed airborne history arms the touchdown detector
+        refs[groundStateName].value = 1;
+        refs[gearLoadName].value = weightNewtons * supportG;
+        float peak = 0;
+        for (int i = 0; i < 100; ++i) {
+            groundStep();
+            peak = std::max(peak, std::abs(observedForce.pitchCue));
+        }
+        return peak;
+    };
+    const float softLanding = landingPeak(1.2f);
+    const float hardLanding = landingPeak(3.0f);
+    assert(softLanding > 1e-5f && hardLanding > softLanding);
+    XPluginStop(); resetGroundTelemetry(); beginGroundFlight();
+    refs["sim/flightmodel/position/local_x"].doubleValue = 1000000000026.125;
+    refs[gearLoadName].value = weightNewtons * 3;
+    groundStep();
+    assert(observedForce.rollCue == 0 && observedForce.pitchCue == 0); // teleport, including at large coordinates
+    settleGround();
+
+    // Support telemetry is optional: angular cues still work without either
+    // mass or normal gear force. Missing contact disables only these cues.
+    for (const char *missing : {massName, gearLoadName}) {
+        XPluginStop(); resetGroundTelemetry();
+        const Ref backup = refs.at(missing); refs.erase(missing);
+        beginGroundFlight();
+        refs[rollAccelerationName].value = 30;
+        groundStep();
+        assert(observedForce.rollCue != 0);
+        XPluginStop(); refs.emplace(missing, backup);
+    }
+    for (float invalidMass : {0.0f, invalidTelemetry}) {
+        XPluginStop(); resetGroundTelemetry(); refs[massName].value = invalidMass;
+        beginGroundFlight();
+        refs[pitchAccelerationName].value = 30;
+        groundStep();
+        assert(observedForce.pitchCue != 0 && observedForce.rollCue == 0);
+    }
+    XPluginStop(); resetGroundTelemetry();
+    const Ref savedPosition = refs.at("sim/flightmodel/position/local_x");
+    refs.erase("sim/flightmodel/position/local_x");
+    beginGroundFlight();
+    refs[gearLoadName].value = weightNewtons * 2;
+    groundStep();
+    assert(observedForce.pitchCue != 0); // optional teleport monitoring does not gate the force cue
+    XPluginStop(); refs.emplace("sim/flightmodel/position/local_x", savedPosition);
+    XPluginStop(); resetGroundTelemetry();
+    const Ref savedContact = refs.at(groundStateName); refs.erase(groundStateName);
+    beginGroundFlight();
+    refs[gearLoadName].value = weightNewtons * 3;
+    refs[rollAccelerationName].value = 30;
+    for (int i = 0; i < 30; ++i) groundStep();
+    assert(observedForce.rollCue == 0 && observedForce.pitchCue == 0);
+    XPluginStop(); refs.emplace(groundStateName, savedContact);
+
+    // Pause/replay and scenery reloads re-prime loads instead of treating a
+    // stale baseline as a new bump. Neither changes the user's force profile.
+    XPluginStop(); resetGroundTelemetry(); beginGroundFlight();
+    refs[gearLoadName].value = weightNewtons * 2;
+    groundStep();
+    assert(observedForce.pitchCue != 0);
+    refs["sim/time/paused"].value = 1;
+    for (int i = 0; i < 100; ++i) callback(.02f, 0, 0, nullptr);
+    assert(std::abs(observedForce.pitchCue) < 1e-5f);
+    refs[gearLoadName].value = weightNewtons * 3;
+    refs["sim/time/paused"].value = 0;
+    groundStep();
+    assert(observedForce.rollCue == 0 && observedForce.pitchCue == 0);
+    settleGround();
+    refs["sim/time/is_in_replay"].value = 1;
+    refs[gearLoadName].value = weightNewtons;
+    settleGround();
+    refs["sim/time/is_in_replay"].value = 0;
+    groundStep();
+    assert(observedForce.rollCue == 0 && observedForce.pitchCue == 0);
+    refs[gearLoadName].value = weightNewtons * 2;
+    XPluginReceiveMessage(XPLM_PLUGIN_XPLANE, XPLM_MSG_AIRPORT_LOADED, nullptr);
+    groundStep();
+    assert(observedForce.rollCue == 0 && observedForce.pitchCue == 0);
+    assert(std::abs(observedForce.springRatio() - .2f) < .001f);
+    XPluginStop();
+
+    // Air cues remain available with incomplete ground telemetry. At touchdown
+    // their decaying tail shares the same motor-offset budget with gear loads.
+    resetGroundTelemetry();
+    refs[groundStateName].value = 0;
+    refs[gearLoadName].value = 0;
+    refs["sim/flightmodel/misc/Qstatic"].value = g940::defaultProfile.referencePressurePa / (2 * g940::pascalsPerPsf);
+    refs[stalledName].values[0] = 1;
+    std::ofstream(configFolder / "aircraft.ini") << "[General]\nreference_speed_knots=125\npitch_aoa_gain=0\n"
+        "turbulence_gain=.015\nstall_buffet_gain=.06\nground_bump_gain=.12\nlanding_bump_gain=.12\n";
+    const Ref savedMass = refs.at(massName); refs.erase(massName);
+    assert(buffetRms() > .005f);
+    XPluginStop(); refs.emplace(massName, savedMass);
+    beginCueFlight();
+    refs[groundStateName].value = 1;
+    refs[gearLoadName].value = weightNewtons * 10;
+    refs[rollAccelerationName].value = -1200;
+    refs[pitchAccelerationName].value = -1200;
+    float previousRollCue = observedForce.rollCue, previousPitchCue = observedForce.pitchCue;
+    for (int i = 0; i < 100; ++i) {
+        groundStep();
+        assert(std::abs(observedForce.rollCue - previousRollCue) <= .060001f);
+        assert(std::abs(observedForce.pitchCue - previousPitchCue) <= .060001f);
+        previousRollCue = observedForce.rollCue; previousPitchCue = observedForce.pitchCue;
+    }
     XPluginStop();
     std::filesystem::remove_all(configRoot);
 #endif
